@@ -16,7 +16,6 @@ defmodule LLMClassifierTest do
         results =
           Enum.map(categories, fn {name, tests} ->
             IO.puts("\nCategory: #{name}")
-            IO.puts("Tests: #{inspect(tests)}")
 
             category_results =
               LLMClassifierTest.run_category_tests(
