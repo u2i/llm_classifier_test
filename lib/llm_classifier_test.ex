@@ -105,6 +105,8 @@ defmodule LLMClassifierTest do
   defp run_positive_test(category_name, text, model_name, prompt_name, model_function, results) do
     categories = model_function.(text, model_name, prompt_name)
 
+    text = format_text(text)
+
     if Enum.member?(categories, category_name) do
       IO.puts("  ✅ Positive: #{text} (Expected: #{category_name})")
       update_in(results, [:positive, :passed], &(&1 + 1))
@@ -125,6 +127,8 @@ defmodule LLMClassifierTest do
          results
        ) do
     categories = model_function.(text, model_name, prompt_name)
+
+    text = format_text(text)
 
     cond do
       Enum.member?(categories, category_name) ->
@@ -172,6 +176,15 @@ defmodule LLMClassifierTest do
       IO.puts("Overall success rate: #{Float.round(total_passed / total_tests * 100, 2)}%")
     else
       IO.puts("Overall success rate: N/A (no tests run)")
+    end
+  end
+
+  defp format_text(text) do
+    case text do
+      {question, answer} = _ when is_tuple(text) ->
+        "Q: #{question} A: #{answer}"
+      _ ->
+        text
     end
   end
 end
