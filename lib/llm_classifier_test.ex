@@ -60,9 +60,9 @@ defmodule LLMClassifierTest do
     end
   end
 
-  defmacro positive(text) do
+  defmacro positive(text, fallback_category \\ nil) do
     quote do
-      @current_tests [{:positive, unquote(text)}]
+      @current_tests [{:positive, unquote(text), unquote(fallback_category)}]
     end
   end
 
@@ -82,8 +82,16 @@ defmodule LLMClassifierTest do
         %{positive: %{passed: 0, failed: 0}, negative: %{passed: 0, failed: 0}},
         fn test, acc ->
           case test do
-            {:positive, text} ->
-              run_positive_test(category_name, text, model_name, prompt_name, model_function, acc)
+            {:positive, text, mode} ->
+              run_positive_test(
+                category_name,
+                text,
+                model_name,
+                prompt_name,
+                model_function,
+                acc,
+                mode
+              )
 
             {:negative, text, expected_category} ->
               run_negative_test(
@@ -102,18 +110,34 @@ defmodule LLMClassifierTest do
     {category_name, results}
   end
 
-  defp run_positive_test(category_name, text, model_name, prompt_name, model_function, results) do
+  defp run_positive_test(
+         category_name,
+         text,
+         model_name,
+         prompt_name,
+         model_function,
+         results,
+         fallback_category
+       ) do
     categories = model_function.(text, model_name, prompt_name)
+    test_name = format_text(text)
 
-    text = format_text(text)
+    cond do
+      Enum.member?(categories, category_name) ->
+        IO.puts("  ✅ Positive: #{test_name}")
+        update_in(results, [:positive, :passed], &(&1 + 1))
 
-    if Enum.member?(categories, category_name) do
-      IO.puts("  ✅ Positive: #{text} (Expected: #{category_name})")
-      update_in(results, [:positive, :passed], &(&1 + 1))
-    else
-      IO.puts("  ❌ Positive: #{text} (Expected: #{category_name})")
-      IO.puts("    Got: #{Enum.join(categories, ", ")}")
-      update_in(results, [:positive, :failed], &(&1 + 1))
+      Enum.member?(categories, fallback_category) ->
+        details = "Expected: #{category_name} | Got: #{fallback_category}"
+
+        IO.puts("  ❕ Positive: #{test_name} [#{details}]")
+        update_in(results, [:positive, :passed], &(&1 + 1))
+
+      true ->
+        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")}"
+
+        IO.puts("  ❌ Positive: #{test_name} [#{details}]")
+        update_in(results, [:positive, :failed], &(&1 + 1))
     end
   end
 
@@ -127,22 +151,25 @@ defmodule LLMClassifierTest do
          results
        ) do
     categories = model_function.(text, model_name, prompt_name)
-
-    text = format_text(text)
+    test_name = format_text(text)
 
     cond do
       Enum.member?(categories, category_name) ->
-        IO.puts("  ❌ Negative: #{text} (Expected: not #{category_name})")
-        IO.puts("    Got: #{Enum.join(categories, ", ")}")
+        details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
+
+        IO.puts("  ❌ Negative: #{test_name} [#{details}]")
         update_in(results, [:negative, :failed], &(&1 + 1))
 
       is_nil(expected_category) or Enum.member?(categories, expected_category) ->
-        IO.puts("  ✅ Negative: #{text} (Expected alternative: #{expected_category || "any"})")
+        details = "Expected: #{expected_category || "any"}"
+
+        IO.puts("  ✅ Negative: #{test_name} [#{details}]")
         update_in(results, [:negative, :passed], &(&1 + 1))
 
       true ->
-        IO.puts("  ❌ Negative: #{text} (Expected alternative: #{expected_category})")
-        IO.puts("    Got: #{Enum.join(categories, ", ")}")
+        details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
+
+        IO.puts("  ❌ Negative: #{test_name} [#{details}]")
         update_in(results, [:negative, :failed], &(&1 + 1))
     end
   end
@@ -183,6 +210,7 @@ defmodule LLMClassifierTest do
     case text do
       {question, answer} = _ when is_tuple(text) ->
         "Q: #{question} A: #{answer}"
+
       _ ->
         text
     end
