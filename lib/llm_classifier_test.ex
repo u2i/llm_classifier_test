@@ -15,8 +15,6 @@ defmodule LLMClassifierTest do
 
         results =
           Enum.map(categories, fn {name, tests} ->
-            IO.puts("\nCategory: #{name}")
-
             category_results =
               LLMClassifierTest.run_category_tests(
                 name,
@@ -32,7 +30,7 @@ defmodule LLMClassifierTest do
         overall_results = LLMClassifierTest.aggregate_results(results)
         LLMClassifierTest.print_overall_summary(overall_results)
 
-        {__MODULE__, results}
+        {__MODULE__, overall_results}
       end
 
       defoverridable run_all_tests: 2
@@ -73,8 +71,8 @@ defmodule LLMClassifierTest do
   end
 
   def run_category_tests(category_name, tests, model_name, prompt_name, model_function) do
-    IO.puts("Running tests for category: #{category_name}")
-    IO.puts("Model: #{model_name}, Prompt: #{prompt_name}")
+    IO.puts("\nRunning tests for category: [#{category_name}]")
+    IO.puts("Model: [#{model_name}], Prompt: [#{prompt_name}]")
 
     results =
       Enum.reduce(
@@ -124,19 +122,19 @@ defmodule LLMClassifierTest do
 
     cond do
       Enum.member?(categories, category_name) ->
-        IO.puts("  ✅ Positive: #{test_name}")
+        IO.puts("\s\s\s✅\tPositive: #{test_name}")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
       Enum.member?(categories, fallback_category) ->
         details = "Expected: #{category_name} | Got: #{fallback_category}"
 
-        IO.puts("  ❕ Positive: #{test_name} [#{details}]")
+        IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
       true ->
         details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("  ❌ Positive: #{test_name} [#{details}]")
+        IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :failed], &(&1 + 1))
     end
   end
@@ -157,19 +155,19 @@ defmodule LLMClassifierTest do
       Enum.member?(categories, category_name) ->
         details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("  ❌ Negative: #{test_name} [#{details}]")
+        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :failed], &(&1 + 1))
 
       is_nil(expected_category) or Enum.member?(categories, expected_category) ->
         details = "Expected: #{expected_category || "any"}"
 
-        IO.puts("  ✅ Negative: #{test_name} [#{details}]")
+        IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :passed], &(&1 + 1))
 
       true ->
         details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("  ❌ Negative: #{test_name} [#{details}]")
+        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :failed], &(&1 + 1))
     end
   end
@@ -194,15 +192,15 @@ defmodule LLMClassifierTest do
 
     total_passed = results.positive.passed + results.negative.passed
 
-    IO.puts("Overall Summary:")
-    IO.puts("Total tests: #{total_tests}")
-    IO.puts("Total passed: #{total_passed}")
-    IO.puts("Total failed: #{total_tests - total_passed}")
+    IO.puts("\nModule summary:")
+    IO.puts("\tTotal tests: #{total_tests}")
+    IO.puts("\s\s\s✅\tTotal passed: #{total_passed}")
+    IO.puts("\s\s\s❌\tTotal failed: #{total_tests - total_passed} ")
 
     if total_tests > 0 do
-      IO.puts("Overall success rate: #{Float.round(total_passed / total_tests * 100, 2)}%")
+      IO.puts("\tSuccess rate: #{Float.round(total_passed / total_tests * 100, 2)}%")
     else
-      IO.puts("Overall success rate: N/A (no tests run)")
+      IO.puts("\tSuccess rate: N/A (no tests run)")
     end
   end
 
