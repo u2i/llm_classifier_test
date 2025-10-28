@@ -119,11 +119,14 @@ defmodule LLMClassifierTest do
          prompt_name,
          model_function,
          results,
-         fallback_category,
+         acceptable_categories,
          label_severity_map
        ) do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
+
+    # Normalize acceptable_categories to always be a list
+    acceptable_list = normalize_acceptable_categories(acceptable_categories)
 
     cond do
       # Exact match - full success
@@ -131,9 +134,10 @@ defmodule LLMClassifierTest do
         IO.puts("\s\s\s✅\tPositive: #{test_name}")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
-      # Fallback category match (if specified) - full success
-      fallback_category && Enum.member?(categories, fallback_category) ->
-        details = "Expected: #{category_name} | Got: #{fallback_category}"
+      # Any acceptable category match (if specified) - full success
+      acceptable_list != [] && Enum.any?(acceptable_list, &Enum.member?(categories, &1)) ->
+        matched = Enum.find(acceptable_list, &Enum.member?(categories, &1))
+        details = "Expected: #{category_name} | Got: #{matched} (acceptable)"
         IO.puts("\s\s\s✅\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
@@ -150,6 +154,10 @@ defmodule LLMClassifierTest do
         update_in(results, [:positive, :errored], &(&1 + 1))
     end
   end
+
+  defp normalize_acceptable_categories(nil), do: []
+  defp normalize_acceptable_categories(atom) when is_atom(atom), do: [atom]
+  defp normalize_acceptable_categories(list) when is_list(list), do: list
 
   defp run_negative_test(
          category_name,
