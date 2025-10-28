@@ -157,6 +157,7 @@ defmodule LLMClassifierTest do
 
   defp normalize_acceptable_categories(nil), do: []
   defp normalize_acceptable_categories(atom) when is_atom(atom), do: [atom]
+  defp normalize_acceptable_categories(string) when is_binary(string), do: [String.to_atom(string)]
   defp normalize_acceptable_categories(list) when is_list(list), do: list
 
   defp run_negative_test(
