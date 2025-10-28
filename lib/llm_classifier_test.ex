@@ -125,31 +125,34 @@ defmodule LLMClassifierTest do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
+    # Normalize category_name to atom if it's a string
+    category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
+
     # Normalize acceptable_categories to always be a list
     acceptable_list = normalize_acceptable_categories(acceptable_categories)
 
     cond do
       # Exact match - full success
-      Enum.member?(categories, category_name) ->
+      Enum.member?(categories, category_atom) ->
         IO.puts("\s\s\s✅\tPositive: #{test_name}")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
       # Any acceptable category match (if specified) - full success
       acceptable_list != [] && Enum.any?(acceptable_list, &Enum.member?(categories, &1)) ->
         matched = Enum.find(acceptable_list, &Enum.member?(categories, &1))
-        details = "Expected: #{category_name} | Got: #{matched} (acceptable)"
+        details = "Expected: #{category_atom} | Got: #{matched} (acceptable)"
         IO.puts("\s\s\s✅\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
       # Check if any returned category is same or greater severity - warning
-      has_same_or_greater_severity?(categories, category_name, label_severity_map) ->
-        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+      has_same_or_greater_severity?(categories, category_atom, label_severity_map) ->
+        details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
         IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :warned], &(&1 + 1))
 
       # No match with same or greater severity - error
       true ->
-        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")} (lower severity or wrong)"
+        details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (lower severity or wrong)"
         IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :errored], &(&1 + 1))
     end
@@ -173,28 +176,32 @@ defmodule LLMClassifierTest do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
+    # Normalize category_name and expected_category to atoms if they're strings
+    category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
+    expected_atom = if is_binary(expected_category), do: String.to_atom(expected_category), else: expected_category
+
     cond do
       # False positive - flagged with the category we're testing against - WARNING (not error!)
-      Enum.member?(categories, category_name) ->
-        details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
+      Enum.member?(categories, category_atom) ->
+        details = "Expected: NOT #{category_atom} | Got: #{Enum.join(categories, ", ")}"
         IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :warned], &(&1 + 1))
 
       # Correctly didn't flag, and either no specific category expected or got expected category
-      is_nil(expected_category) or Enum.member?(categories, expected_category) ->
-        details = "Expected: #{expected_category || "any"}"
+      is_nil(expected_atom) or Enum.member?(categories, expected_atom) ->
+        details = "Expected: #{expected_atom || "any"}"
         IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :passed], &(&1 + 1))
 
       # Correctly didn't flag with wrong category, but check severity
-      has_same_or_greater_severity?(categories, expected_category, label_severity_map) ->
-        details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+      has_same_or_greater_severity?(categories, expected_atom, label_severity_map) ->
+        details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
         IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :warned], &(&1 + 1))
 
       # Wrong category - WARNING (never error for negative tests)
       true ->
-        details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
+        details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")}"
         IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :warned], &(&1 + 1))
     end
