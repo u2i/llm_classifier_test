@@ -6,6 +6,7 @@ defmodule LLMClassifierTest do
       @prompt_name unquote(opts[:prompt_name] || "default_prompt")
       Module.register_attribute(__MODULE__, :categories_acc, accumulate: true)
       @model_function unquote(opts[:model_function] || quote(do: &default_model_function/3))
+      @label_severity_map unquote(opts[:label_severity_map]) || %{}
 
       @before_compile LLMClassifierTest
 
@@ -21,16 +22,17 @@ defmodule LLMClassifierTest do
                 tests,
                 model_name,
                 prompt_name,
-                @model_function
+                @model_function,
+                @label_severity_map
               )
 
             {name, category_results}
           end)
 
         overall_results = LLMClassifierTest.aggregate_results(results)
-        LLMClassifierTest.print_overall_summary(overall_results)
+        summary = LLMClassifierTest.print_overall_summary(overall_results)
 
-        {__MODULE__, overall_results}
+        {__MODULE__, overall_results, summary}
       end
 
       defoverridable run_all_tests: 2
@@ -70,14 +72,14 @@ defmodule LLMClassifierTest do
     end
   end
 
-  def run_category_tests(category_name, tests, model_name, prompt_name, model_function) do
+  def run_category_tests(category_name, tests, model_name, prompt_name, model_function, label_severity_map \\ %{}) do
     IO.puts("\nRunning tests for category: [#{category_name}]")
     IO.puts("Model: [#{model_name}], Prompt: [#{prompt_name}]")
 
     results =
       Enum.reduce(
         tests,
-        %{positive: %{passed: 0, failed: 0}, negative: %{passed: 0, failed: 0}},
+        %{positive: %{passed: 0, warned: 0, errored: 0}, negative: %{passed: 0, warned: 0, errored: 0}},
         fn test, acc ->
           case test do
             {:positive, text, mode} ->
@@ -88,7 +90,8 @@ defmodule LLMClassifierTest do
                 prompt_name,
                 model_function,
                 acc,
-                mode
+                mode,
+                label_severity_map
               )
 
             {:negative, text, expected_category} ->
@@ -99,7 +102,8 @@ defmodule LLMClassifierTest do
                 model_name,
                 prompt_name,
                 model_function,
-                acc
+                acc,
+                label_severity_map
               )
           end
         end
@@ -115,27 +119,35 @@ defmodule LLMClassifierTest do
          prompt_name,
          model_function,
          results,
-         fallback_category
+         fallback_category,
+         label_severity_map
        ) do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
     cond do
+      # Exact match - full success
       Enum.member?(categories, category_name) ->
         IO.puts("\s\s\s✅\tPositive: #{test_name}")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
-      Enum.member?(categories, fallback_category) ->
+      # Fallback category match (if specified) - full success
+      fallback_category && Enum.member?(categories, fallback_category) ->
         details = "Expected: #{category_name} | Got: #{fallback_category}"
-
-        IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
+        IO.puts("\s\s\s✅\tPositive: #{test_name} [#{details}]")
         update_in(results, [:positive, :passed], &(&1 + 1))
 
-      true ->
-        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")}"
+      # Check if any returned category is same or greater severity - warning
+      has_same_or_greater_severity?(categories, category_name, label_severity_map) ->
+        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+        IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
+        update_in(results, [:positive, :warned], &(&1 + 1))
 
+      # No match with same or greater severity - error
+      true ->
+        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")} (lower severity or wrong)"
         IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
-        update_in(results, [:positive, :failed], &(&1 + 1))
+        update_in(results, [:positive, :errored], &(&1 + 1))
     end
   end
 
@@ -146,61 +158,107 @@ defmodule LLMClassifierTest do
          model_name,
          prompt_name,
          model_function,
-         results
+         results,
+         label_severity_map
        ) do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
     cond do
+      # False positive - flagged with the category we're testing against - WARNING (not error!)
       Enum.member?(categories, category_name) ->
         details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
+        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
+        update_in(results, [:negative, :warned], &(&1 + 1))
 
-        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :failed], &(&1 + 1))
-
+      # Correctly didn't flag, and either no specific category expected or got expected category
       is_nil(expected_category) or Enum.member?(categories, expected_category) ->
         details = "Expected: #{expected_category || "any"}"
-
         IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
         update_in(results, [:negative, :passed], &(&1 + 1))
 
+      # Correctly didn't flag with wrong category, but check severity
+      has_same_or_greater_severity?(categories, expected_category, label_severity_map) ->
+        details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
+        update_in(results, [:negative, :warned], &(&1 + 1))
+
+      # Wrong category - WARNING (never error for negative tests)
       true ->
         details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
+        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
+        update_in(results, [:negative, :warned], &(&1 + 1))
+    end
+  end
 
-        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :failed], &(&1 + 1))
+  defp has_same_or_greater_severity?(_returned_categories, _expected_category, label_severity_map) when map_size(label_severity_map) == 0 do
+    # No severity map provided, can't determine severity
+    false
+  end
+
+  defp has_same_or_greater_severity?(returned_categories, expected_category, label_severity_map) do
+    expected_severity = Map.get(label_severity_map, expected_category)
+
+    if is_nil(expected_severity) do
+      false
+    else
+      severity_order = [:red, :orange, :yellow, :green, :white]
+      expected_level = Enum.find_index(severity_order, &(&1 == expected_severity))
+
+      Enum.any?(returned_categories, fn cat ->
+        returned_severity = Map.get(label_severity_map, cat)
+        if is_nil(returned_severity) do
+          false
+        else
+          returned_level = Enum.find_index(severity_order, &(&1 == returned_severity))
+          returned_level <= expected_level
+        end
+      end)
     end
   end
 
   def aggregate_results(results) do
     Enum.reduce(
       results,
-      %{positive: %{passed: 0, failed: 0}, negative: %{passed: 0, failed: 0}},
+      %{positive: %{passed: 0, warned: 0, errored: 0}, negative: %{passed: 0, warned: 0, errored: 0}},
       fn {_, {_, category_results}}, acc ->
         update_in(acc, [:positive, :passed], &(&1 + category_results.positive.passed))
-        |> update_in([:positive, :failed], &(&1 + category_results.positive.failed))
+        |> update_in([:positive, :warned], &(&1 + category_results.positive.warned))
+        |> update_in([:positive, :errored], &(&1 + category_results.positive.errored))
         |> update_in([:negative, :passed], &(&1 + category_results.negative.passed))
-        |> update_in([:negative, :failed], &(&1 + category_results.negative.failed))
+        |> update_in([:negative, :warned], &(&1 + category_results.negative.warned))
+        |> update_in([:negative, :errored], &(&1 + category_results.negative.errored))
       end
     )
   end
 
   def print_overall_summary(results) do
-    total_tests =
-      results.positive.passed + results.positive.failed + results.negative.passed +
-        results.negative.failed
-
     total_passed = results.positive.passed + results.negative.passed
+    total_warned = results.positive.warned + results.negative.warned
+    total_errored = results.positive.errored + results.negative.errored
+    total_tests = total_passed + total_warned + total_errored
 
     IO.puts("\nModule summary:")
     IO.puts("\tTotal tests: #{total_tests}")
-    IO.puts("\s\s\s✅\tTotal passed: #{total_passed}")
-    IO.puts("\s\s\s❌\tTotal failed: #{total_tests - total_passed} ")
+    IO.puts("\s\s\s✅\tPassed: #{total_passed}")
+    IO.puts("\s\s\s⚠️\tWarnings: #{total_warned}")
+    IO.puts("\s\s\s❌\tErrors: #{total_errored}")
 
     if total_tests > 0 do
-      IO.puts("\tSuccess rate: #{Float.round(total_passed / total_tests * 100, 2)}%")
+      success_rate = Float.round(total_passed / total_tests * 100, 2)
+      IO.puts("\tSuccess rate: #{success_rate}%")
+
+      # Return additional info for script exit logic
+      %{
+        total_tests: total_tests,
+        passed: total_passed,
+        warned: total_warned,
+        errored: total_errored,
+        success_rate: success_rate
+      }
     else
       IO.puts("\tSuccess rate: N/A (no tests run)")
+      %{total_tests: 0, passed: 0, warned: 0, errored: 0, success_rate: 0}
     end
   end
 
@@ -208,6 +266,20 @@ defmodule LLMClassifierTest do
     case text do
       {question, answer} = _ when is_tuple(text) ->
         "Q: #{question} A: #{answer}"
+
+      _ when is_binary(text) ->
+        # Extract question and answer from multi-line text
+        lines = String.split(text, "\n", trim: true)
+        case lines do
+          [question, answer | _] ->
+            question_clean = String.trim(question)
+            answer_clean = String.trim(answer)
+            "#{question_clean} | Response: #{answer_clean}"
+          [single_line] ->
+            String.trim(single_line)
+          _ ->
+            text
+        end
 
       _ ->
         text
