@@ -1,4 +1,212 @@
 defmodule LLMClassifierTest do
+  defmodule TestResult do
+    @moduledoc """
+    Represents a single test result.
+    """
+    defstruct [
+      :test_type,        # :positive or :negative
+      :test_name,        # Formatted test name (question + answer)
+      :status,           # :passed, :warning, or :error
+      :expected_category, # The category being tested
+      :actual_categories, # List of categories returned
+      :acceptable_categories, # List of acceptable fallback categories
+      :details           # Additional details/reason
+    ]
+
+    @type test_type :: :positive | :negative
+    @type status :: :passed | :warning | :error
+
+    @type t :: %__MODULE__{
+      test_type: test_type(),
+      test_name: String.t(),
+      status: status(),
+      expected_category: atom(),
+      actual_categories: [atom()],
+      acceptable_categories: [atom()],
+      details: String.t()
+    }
+  end
+
+  defmodule Formatter do
+    @moduledoc """
+    Behavior for test result formatters.
+    """
+
+    @callback format_header(category_name :: String.t(), model_name :: String.t(), prompt_name :: String.t()) :: :ok
+    @callback format_test_result(test_result :: LLMClassifierTest.TestResult.t()) :: :ok
+    @callback format_summary(summary :: map()) :: :ok
+  end
+
+  defmodule TerminalFormatter do
+    @moduledoc """
+    Terminal formatter with emoji-based output (default).
+    """
+    @behaviour LLMClassifierTest.Formatter
+
+    @impl true
+    def format_header(category_name, model_name, prompt_name) do
+      IO.puts("\nRunning tests for category: [#{category_name}]")
+      IO.puts("Model: [#{model_name}], Prompt: [#{prompt_name}]")
+      :ok
+    end
+
+    @impl true
+    def format_test_result(%LLMClassifierTest.TestResult{} = result) do
+      emoji = case result.status do
+        :passed -> "✅"
+        :warning -> "⚠️"
+        :error -> "❌"
+      end
+
+      type = case result.test_type do
+        :positive -> "Positive"
+        :negative -> "Negative"
+      end
+
+      base_msg = "   #{emoji}\t#{type}: #{result.test_name}"
+
+      msg = if result.details do
+        "#{base_msg} [#{result.details}]"
+      else
+        base_msg
+      end
+
+      IO.puts(msg)
+      :ok
+    end
+
+    @impl true
+    def format_summary(summary) do
+      total_tests = summary.total_tests
+      total_passed = summary.passed
+      total_warned = summary.warned
+      total_errored = summary.errored
+
+      IO.puts("\nModule summary:")
+      IO.puts("\tTotal tests: #{total_tests}")
+      IO.puts("   ✅\tPassed: #{total_passed}")
+      IO.puts("   ⚠️\tWarnings: #{total_warned}")
+      IO.puts("   ❌\tErrors: #{total_errored}")
+
+      if total_tests > 0 do
+        IO.puts("\tSuccess rate: #{summary.success_rate}%")
+      else
+        IO.puts("\tSuccess rate: N/A (no tests run)")
+      end
+      :ok
+    end
+  end
+
+  defmodule MarkdownFormatter do
+    @moduledoc """
+    Markdown formatter for test results.
+    """
+    @behaviour LLMClassifierTest.Formatter
+
+    @impl true
+    def format_header(category_name, model_name, prompt_name) do
+      IO.puts("\n## Category: #{category_name}")
+      IO.puts("**Model**: #{model_name}, **Prompt**: #{prompt_name}\n")
+      :ok
+    end
+
+    @impl true
+    def format_test_result(%LLMClassifierTest.TestResult{} = result) do
+      # Parse question and answer from test_name
+      {question, answer} = parse_test_name(result.test_name)
+
+      # Determine status symbol
+      status_symbol = case result.status do
+        :passed -> "✓"
+        :warning -> "⚠"
+        :error -> "✗"
+      end
+
+      # Format the output
+      IO.puts("#{status_symbol} Question: #{question} \"#{answer}\"")
+
+      # Show chosen response (actual categories)
+      chosen = if Enum.empty?(result.actual_categories) do
+        "_none_"
+      else
+        result.actual_categories
+        |> Enum.map(&to_string/1)
+        |> Enum.join(", ")
+      end
+      IO.puts("  **Chosen**: #{chosen}")
+
+      # Show valid responses
+      valid = case result.test_type do
+        :positive ->
+          # For positive tests, show expected + acceptable
+          all_valid = [result.expected_category | result.acceptable_categories]
+          |> Enum.reject(&is_nil/1)
+          |> Enum.uniq()
+          |> Enum.map(&to_string/1)
+          |> Enum.join(", ")
+          all_valid
+        :negative ->
+          # For negative tests, show what was expected (not the category being tested)
+          if result.details && String.contains?(result.details, "Expected:") do
+            # Extract expected from details
+            result.details
+            |> String.split("|")
+            |> List.first()
+            |> String.replace("Expected:", "")
+            |> String.trim()
+          else
+            "_any except #{result.expected_category}_"
+          end
+      end
+      IO.puts("  Valid: #{valid}\n")
+      :ok
+    end
+
+    @impl true
+    def format_summary(summary) do
+      total_tests = summary.total_tests
+      total_passed = summary.passed
+      total_warned = summary.warned
+      total_errored = summary.errored
+
+      IO.puts("\n## Summary")
+      IO.puts("- **Total tests**: #{total_tests}")
+      IO.puts("- **Passed**: #{total_passed}")
+      IO.puts("- **Warnings**: #{total_warned}")
+      IO.puts("- **Errors**: #{total_errored}")
+
+      if total_tests > 0 do
+        IO.puts("- **Success rate**: #{summary.success_rate}%")
+      else
+        IO.puts("- **Success rate**: N/A (no tests run)")
+      end
+      :ok
+    end
+
+    # Parse test_name back into question and answer
+    defp parse_test_name(test_name) do
+      cond do
+        # Format: "Q: question A: answer"
+        String.contains?(test_name, "Q:") && String.contains?(test_name, "A:") ->
+          parts = String.split(test_name, "A:", parts: 2)
+          question = parts |> List.first() |> String.replace("Q:", "") |> String.trim()
+          answer = parts |> List.last() |> String.trim()
+          {question, answer}
+
+        # Format: "question | Response: answer"
+        String.contains?(test_name, "| Response:") ->
+          parts = String.split(test_name, "| Response:", parts: 2)
+          question = parts |> List.first() |> String.trim()
+          answer = parts |> List.last() |> String.trim()
+          {question, answer}
+
+        # Fallback: use whole string as question
+        true ->
+          {test_name, ""}
+      end
+    end
+  end
+
   defmacro __using__(opts) do
     quote do
       import LLMClassifierTest
@@ -10,7 +218,8 @@ defmodule LLMClassifierTest do
 
       @before_compile LLMClassifierTest
 
-      def run_all_tests(model_name, prompt_name) do
+      def run_all_tests(model_name, prompt_name, opts \\ []) do
+        formatter = Keyword.get(opts, :formatter, LLMClassifierTest.TerminalFormatter)
         categories = categories()
         IO.puts("Running all tests for model: #{model_name}, prompt: #{prompt_name}")
 
@@ -23,19 +232,21 @@ defmodule LLMClassifierTest do
                 model_name,
                 prompt_name,
                 @model_function,
-                @label_severity_map
+                @label_severity_map,
+                formatter
               )
 
             {name, category_results}
           end)
 
         overall_results = LLMClassifierTest.aggregate_results(results)
-        summary = LLMClassifierTest.print_overall_summary(overall_results)
+        summary = LLMClassifierTest.print_overall_summary(overall_results, formatter)
 
         {__MODULE__, overall_results, summary}
       end
 
       defoverridable run_all_tests: 2
+      defoverridable run_all_tests: 3
     end
   end
 
@@ -72,9 +283,8 @@ defmodule LLMClassifierTest do
     end
   end
 
-  def run_category_tests(category_name, tests, model_name, prompt_name, model_function, label_severity_map \\ %{}) do
-    IO.puts("\nRunning tests for category: [#{category_name}]")
-    IO.puts("Model: [#{model_name}], Prompt: [#{prompt_name}]")
+  def run_category_tests(category_name, tests, model_name, prompt_name, model_function, label_severity_map \\ %{}, formatter \\ TerminalFormatter) do
+    formatter.format_header(to_string(category_name), model_name, prompt_name)
 
     results =
       Enum.reduce(
@@ -91,7 +301,8 @@ defmodule LLMClassifierTest do
                 model_function,
                 acc,
                 mode,
-                label_severity_map
+                label_severity_map,
+                formatter
               )
 
             {:negative, text, expected_category} ->
@@ -103,7 +314,8 @@ defmodule LLMClassifierTest do
                 prompt_name,
                 model_function,
                 acc,
-                label_severity_map
+                label_severity_map,
+                formatter
               )
           end
         end
@@ -120,7 +332,8 @@ defmodule LLMClassifierTest do
          model_function,
          results,
          acceptable_categories,
-         label_severity_map
+         label_severity_map,
+         formatter
        ) do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
@@ -131,31 +344,40 @@ defmodule LLMClassifierTest do
     # Normalize acceptable_categories to always be a list
     acceptable_list = normalize_acceptable_categories(acceptable_categories)
 
-    cond do
+    {status, details, results} = cond do
       # Exact match - full success
       Enum.member?(categories, category_atom) ->
-        IO.puts("\s\s\s✅\tPositive: #{test_name}")
-        update_in(results, [:positive, :passed], &(&1 + 1))
+        {:passed, nil, update_in(results, [:positive, :passed], &(&1 + 1))}
 
       # Any acceptable category match (if specified) - full success
       acceptable_list != [] && Enum.any?(acceptable_list, &Enum.member?(categories, &1)) ->
         matched = Enum.find(acceptable_list, &Enum.member?(categories, &1))
         details = "Expected: #{category_atom} | Got: #{matched} (acceptable)"
-        IO.puts("\s\s\s✅\tPositive: #{test_name} [#{details}]")
-        update_in(results, [:positive, :passed], &(&1 + 1))
+        {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
 
       # Check if any returned category is same or greater severity - warning
       has_same_or_greater_severity?(categories, category_atom, label_severity_map) ->
         details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
-        IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
-        update_in(results, [:positive, :warned], &(&1 + 1))
+        {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
 
       # No match with same or greater severity - error
       true ->
         details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (lower severity or wrong)"
-        IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
-        update_in(results, [:positive, :errored], &(&1 + 1))
+        {:error, details, update_in(results, [:positive, :errored], &(&1 + 1))}
     end
+
+    test_result = %TestResult{
+      test_type: :positive,
+      test_name: test_name,
+      status: status,
+      expected_category: category_atom,
+      actual_categories: categories,
+      acceptable_categories: acceptable_list,
+      details: details
+    }
+
+    formatter.format_test_result(test_result)
+    results
   end
 
   defp normalize_acceptable_categories(nil), do: []
@@ -171,7 +393,8 @@ defmodule LLMClassifierTest do
          prompt_name,
          model_function,
          results,
-         label_severity_map
+         label_severity_map,
+         formatter
        ) do
     categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
@@ -180,31 +403,40 @@ defmodule LLMClassifierTest do
     category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
     expected_atom = if is_binary(expected_category), do: String.to_atom(expected_category), else: expected_category
 
-    cond do
+    {status, details, results} = cond do
       # False positive - flagged with the category we're testing against - WARNING (not error!)
       Enum.member?(categories, category_atom) ->
         details = "Expected: NOT #{category_atom} | Got: #{Enum.join(categories, ", ")}"
-        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :warned], &(&1 + 1))
+        {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
 
       # Correctly didn't flag, and either no specific category expected or got expected category
       is_nil(expected_atom) or Enum.member?(categories, expected_atom) ->
         details = "Expected: #{expected_atom || "any"}"
-        IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :passed], &(&1 + 1))
+        {:passed, details, update_in(results, [:negative, :passed], &(&1 + 1))}
 
       # Correctly didn't flag with wrong category, but check severity
       has_same_or_greater_severity?(categories, expected_atom, label_severity_map) ->
         details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
-        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :warned], &(&1 + 1))
+        {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
 
       # Wrong category - WARNING (never error for negative tests)
       true ->
         details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")}"
-        IO.puts("\s\s\s⚠️\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :warned], &(&1 + 1))
+        {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
     end
+
+    test_result = %TestResult{
+      test_type: :negative,
+      test_name: test_name,
+      status: status,
+      expected_category: category_atom,
+      actual_categories: categories,
+      acceptable_categories: [],
+      details: details
+    }
+
+    formatter.format_test_result(test_result)
+    results
   end
 
   defp has_same_or_greater_severity?(_returned_categories, _expected_category, label_severity_map) when map_size(label_severity_map) == 0 do
@@ -248,23 +480,15 @@ defmodule LLMClassifierTest do
     )
   end
 
-  def print_overall_summary(results) do
+  def print_overall_summary(results, formatter \\ TerminalFormatter) do
     total_passed = results.positive.passed + results.negative.passed
     total_warned = results.positive.warned + results.negative.warned
     total_errored = results.positive.errored + results.negative.errored
     total_tests = total_passed + total_warned + total_errored
 
-    IO.puts("\nModule summary:")
-    IO.puts("\tTotal tests: #{total_tests}")
-    IO.puts("\s\s\s✅\tPassed: #{total_passed}")
-    IO.puts("\s\s\s⚠️\tWarnings: #{total_warned}")
-    IO.puts("\s\s\s❌\tErrors: #{total_errored}")
-
-    if total_tests > 0 do
+    summary = if total_tests > 0 do
       success_rate = Float.round(total_passed / total_tests * 100, 2)
-      IO.puts("\tSuccess rate: #{success_rate}%")
 
-      # Return additional info for script exit logic
       %{
         total_tests: total_tests,
         passed: total_passed,
@@ -273,9 +497,11 @@ defmodule LLMClassifierTest do
         success_rate: success_rate
       }
     else
-      IO.puts("\tSuccess rate: N/A (no tests run)")
       %{total_tests: 0, passed: 0, warned: 0, errored: 0, success_rate: 0}
     end
+
+    formatter.format_summary(summary)
+    summary
   end
 
   defp format_text(text) do
