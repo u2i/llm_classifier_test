@@ -266,6 +266,14 @@ defmodule LLMClassifierTest do
     end
   end
 
+  # Alias for category - more semantically accurate since we're describing
+  # a group of related test cases rather than testing a specific category
+  defmacro describe(name, do: block) do
+    quote do
+      LLMClassifierTest.category(unquote(name), do: unquote(block))
+    end
+  end
+
   defmacro __before_compile__(_env) do
     quote do
       def categories do
