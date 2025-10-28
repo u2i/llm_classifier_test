@@ -10,7 +10,8 @@ defmodule LLMClassifierTest do
       :expected_category, # The category being tested
       :actual_categories, # List of categories returned
       :acceptable_categories, # List of acceptable fallback categories
-      :details           # Additional details/reason
+      :details,          # Additional details/reason
+      :full_text         # Full text of the chosen response (optional)
     ]
 
     @type test_type :: :positive | :negative
@@ -23,7 +24,8 @@ defmodule LLMClassifierTest do
       expected_category: atom(),
       actual_categories: [atom()],
       acceptable_categories: [atom()],
-      details: String.t()
+      details: String.t(),
+      full_text: String.t() | nil
     }
   end
 
@@ -125,13 +127,16 @@ defmodule LLMClassifierTest do
       # Format the output
       IO.puts("#{status_symbol} Question: #{question} \"#{answer}\"")
 
-      # Show chosen response (actual categories)
-      chosen = if Enum.empty?(result.actual_categories) do
-        "_none_"
-      else
-        result.actual_categories
-        |> Enum.map(&to_string/1)
-        |> Enum.join(", ")
+      # Show chosen response (use full_text if available, otherwise show categories)
+      chosen = cond do
+        result.full_text && result.full_text != "" ->
+          result.full_text
+        Enum.empty?(result.actual_categories) ->
+          "_none_"
+        true ->
+          result.actual_categories
+          |> Enum.map(&to_string/1)
+          |> Enum.join(", ")
       end
       IO.puts("  **Chosen**: #{chosen}")
 
@@ -335,7 +340,14 @@ defmodule LLMClassifierTest do
          label_severity_map,
          formatter
        ) do
-    categories = model_function.(text, model_name, prompt_name)
+    result = model_function.(text, model_name, prompt_name)
+
+    # Support both old format (list) and new format (map with categories and full_text)
+    {categories, full_text} = case result do
+      %{categories: cats, full_text: text} -> {cats, text}
+      cats when is_list(cats) -> {cats, nil}
+    end
+
     test_name = format_text(text)
 
     # Normalize category_name to atom if it's a string
@@ -373,7 +385,8 @@ defmodule LLMClassifierTest do
       expected_category: category_atom,
       actual_categories: categories,
       acceptable_categories: acceptable_list,
-      details: details
+      details: details,
+      full_text: full_text
     }
 
     formatter.format_test_result(test_result)
@@ -396,7 +409,14 @@ defmodule LLMClassifierTest do
          label_severity_map,
          formatter
        ) do
-    categories = model_function.(text, model_name, prompt_name)
+    result = model_function.(text, model_name, prompt_name)
+
+    # Support both old format (list) and new format (map with categories and full_text)
+    {categories, full_text} = case result do
+      %{categories: cats, full_text: text} -> {cats, text}
+      cats when is_list(cats) -> {cats, nil}
+    end
+
     test_name = format_text(text)
 
     # Normalize category_name and expected_category to atoms if they're strings
@@ -432,7 +452,8 @@ defmodule LLMClassifierTest do
       expected_category: category_atom,
       actual_categories: categories,
       acceptable_categories: [],
-      details: details
+      details: details,
+      full_text: full_text
     }
 
     formatter.format_test_result(test_result)
