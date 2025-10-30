@@ -281,13 +281,7 @@ defmodule LLMClassifierTest do
     case name do
       atom when is_atom(atom) and not is_nil(atom) -> [atom]
       list when is_list(list) -> list
-      string when is_binary(string) ->
-        # Try to convert string to atom, otherwise use empty list
-        try do
-          [String.to_existing_atom(string)]
-        rescue
-          ArgumentError -> []
-        end
+      string when is_binary(string) -> [String.to_atom(string)]
       _ -> []
     end
   end
