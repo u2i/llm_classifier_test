@@ -637,7 +637,9 @@ defmodule LLMClassifierTest do
   end
 
   defp has_same_or_greater_severity?(returned_categories, expected_category, label_severity_map) do
-    expected_severity = Map.get(label_severity_map, expected_category)
+    # Convert atom keys to strings for severity map lookup (label names are strings in DB)
+    expected_key = if is_atom(expected_category), do: Atom.to_string(expected_category), else: expected_category
+    expected_severity = Map.get(label_severity_map, expected_key)
 
     if is_nil(expected_severity) do
       false
@@ -646,7 +648,8 @@ defmodule LLMClassifierTest do
       expected_level = Enum.find_index(severity_order, &(&1 == expected_severity))
 
       Enum.any?(returned_categories, fn cat ->
-        returned_severity = Map.get(label_severity_map, cat)
+        cat_key = if is_atom(cat), do: Atom.to_string(cat), else: cat
+        returned_severity = Map.get(label_severity_map, cat_key)
         if is_nil(returned_severity) do
           false
         else
