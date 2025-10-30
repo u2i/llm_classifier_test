@@ -454,6 +454,11 @@ defmodule LLMClassifierTest do
       cats when is_list(cats) -> {cats, nil}
     end
 
+    # Normalize categories to atoms (some classifiers return strings)
+    categories = Enum.map(categories, fn cat ->
+      if is_binary(cat), do: String.to_atom(cat), else: cat
+    end)
+
     test_name = format_text(text)
 
     # Normalize category_name - if it's a list, use first element for expected category display
@@ -547,6 +552,11 @@ defmodule LLMClassifierTest do
       %{categories: cats, full_text: text} -> {cats, text}
       cats when is_list(cats) -> {cats, nil}
     end
+
+    # Normalize categories to atoms (some classifiers return strings)
+    categories = Enum.map(categories, fn cat ->
+      if is_binary(cat), do: String.to_atom(cat), else: cat
+    end)
 
     test_name = format_text(text)
 
