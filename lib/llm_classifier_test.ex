@@ -259,10 +259,12 @@ defmodule LLMClassifierTest do
     quote do
       Module.register_attribute(__MODULE__, :current_tests, accumulate: true)
       @current_category unquote(name)
+      @current_category_defaults unquote(normalize_category_defaults(name))
       unquote(block)
       @categories_acc {unquote(name), @current_tests}
       Module.delete_attribute(__MODULE__, :current_tests)
       @current_category nil
+      @current_category_defaults []
     end
   end
 
@@ -271,6 +273,22 @@ defmodule LLMClassifierTest do
   defmacro describe(name, do: block) do
     quote do
       LLMClassifierTest.category(unquote(name), do: unquote(block))
+    end
+  end
+
+  # Helper to normalize category name to list of atoms for defaults
+  defp normalize_category_defaults(name) do
+    case name do
+      atom when is_atom(atom) and not is_nil(atom) -> [atom]
+      list when is_list(list) -> list
+      string when is_binary(string) ->
+        # Try to convert string to atom, otherwise use empty list
+        try do
+          [String.to_existing_atom(string)]
+        rescue
+          ArgumentError -> []
+        end
+      _ -> []
     end
   end
 
@@ -284,15 +302,56 @@ defmodule LLMClassifierTest do
     end
   end
 
-  defmacro positive(text, fallback_category \\ nil) do
+  defmacro positive(text, opts \\ []) do
     quote do
-      @current_tests [{:positive, unquote(text), unquote(fallback_category)}]
+      # Support both old syntax (atom/list as second arg) and new syntax (pass:/warn: keywords)
+      {pass_categories, warn_categories} = case unquote(opts) do
+        # New syntax: keyword list with pass: and/or warn:
+        opts when is_list(opts) and (Keyword.keyword?(opts) or opts == []) ->
+          pass = Keyword.get(opts, :pass, []) |> List.wrap()
+          warn = Keyword.get(opts, :warn, []) |> List.wrap()
+
+          # Merge with category defaults
+          merged_pass = Enum.uniq(@current_category_defaults ++ pass)
+          {merged_pass, warn}
+
+        # Old syntax: single atom or list of atoms (treated as warnings for backward compatibility)
+        atom when is_atom(atom) and not is_nil(atom) ->
+          {@current_category_defaults, [atom]}
+
+        # Old syntax: list of atoms (treated as warnings for backward compatibility)
+        list when is_list(list) ->
+          {@current_category_defaults, list}
+
+        # No options or nil
+        _ ->
+          {@current_category_defaults, []}
+      end
+
+      @current_tests [{:positive, unquote(text), {pass_categories, warn_categories}}]
     end
   end
 
-  defmacro negative(text, expected_category \\ nil) do
+  defmacro negative(text, opts \\ []) do
     quote do
-      @current_tests [{:negative, unquote(text), unquote(expected_category)}]
+      # Support both old syntax (atom as second arg) and new syntax (pass:/warn: keywords)
+      {pass_categories, warn_categories} = case unquote(opts) do
+        # New syntax: keyword list with pass: and/or warn:
+        opts when is_list(opts) and (Keyword.keyword?(opts) or opts == []) ->
+          pass = Keyword.get(opts, :pass, []) |> List.wrap()
+          warn = Keyword.get(opts, :warn, []) |> List.wrap()
+          {pass, warn}
+
+        # Old syntax: single atom (expected category to pass)
+        atom when is_atom(atom) and not is_nil(atom) ->
+          {[atom], []}
+
+        # No options or nil
+        _ ->
+          {[], []}
+      end
+
+      @current_tests [{:negative, unquote(text), {pass_categories, warn_categories}}]
     end
   end
 
@@ -344,7 +403,7 @@ defmodule LLMClassifierTest do
          prompt_name,
          model_function,
          results,
-         acceptable_categories,
+         pass_warn_categories,
          label_severity_map,
          formatter
        ) do
@@ -361,28 +420,51 @@ defmodule LLMClassifierTest do
     # Normalize category_name to atom if it's a string
     category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
 
-    # Normalize acceptable_categories to always be a list
-    acceptable_list = normalize_acceptable_categories(acceptable_categories)
+    # Extract pass and warn lists from the tuple structure
+    {pass_list, warn_list} = case pass_warn_categories do
+      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn}
+      # Legacy support: if it's just a list, treat as warnings
+      list when is_list(list) -> {[], list}
+      # Legacy support: if it's an atom, treat as warning
+      atom when is_atom(atom) and not is_nil(atom) -> {[], [atom]}
+      # No categories specified
+      _ -> {[], []}
+    end
 
     {status, details, results} = cond do
-      # Exact match - full success
-      Enum.member?(categories, category_atom) ->
-        {:passed, nil, update_in(results, [:positive, :passed], &(&1 + 1))}
-
-      # Any acceptable category match (if specified) - full success
-      acceptable_list != [] && Enum.any?(acceptable_list, &Enum.member?(categories, &1)) ->
-        matched = Enum.find(acceptable_list, &Enum.member?(categories, &1))
-        details = "Expected: #{category_atom} | Got: #{matched} (acceptable)"
+      # Match any pass category - full success
+      pass_list != [] && Enum.any?(pass_list, &Enum.member?(categories, &1)) ->
+        matched = Enum.find(pass_list, &Enum.member?(categories, &1))
+        details = if length(pass_list) > 1 do
+          "Got: #{matched} (pass)"
+        else
+          nil
+        end
         {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
 
-      # Check if any returned category is same or greater severity - warning
-      has_same_or_greater_severity?(categories, category_atom, label_severity_map) ->
-        details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+      # Match any warn category - warning
+      warn_list != [] && Enum.any?(warn_list, &Enum.member?(categories, &1)) ->
+        matched = Enum.find(warn_list, &Enum.member?(categories, &1))
+        details = "Expected pass category | Got: #{matched} (warn)"
         {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
 
-      # No match with same or greater severity - error
+      # Check if any returned category is same or greater severity - warning
+      pass_list != [] &&
+      Enum.any?(pass_list, fn expected ->
+        has_same_or_greater_severity?(categories, expected, label_severity_map)
+      end) ->
+        details = "Expected: #{Enum.join(pass_list, "/")} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+        {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
+
+      # No match - error
       true ->
-        details = "Expected: #{category_atom} | Got: #{Enum.join(categories, ", ")} (lower severity or wrong)"
+        expected_str = case {pass_list, warn_list} do
+          {[], []} -> "#{category_atom}"
+          {pass, []} -> Enum.join(pass, "/")
+          {[], warn} -> "not #{Enum.join(warn, "/")}"
+          {pass, warn} -> "#{Enum.join(pass, "/")} (or warn: #{Enum.join(warn, "/")})"
+        end
+        details = "Expected: #{expected_str} | Got: #{Enum.join(categories, ", ")}"
         {:error, details, update_in(results, [:positive, :errored], &(&1 + 1))}
     end
 
@@ -392,7 +474,7 @@ defmodule LLMClassifierTest do
       status: status,
       expected_category: category_atom,
       actual_categories: categories,
-      acceptable_categories: acceptable_list,
+      acceptable_categories: pass_list ++ warn_list,
       details: details,
       full_text: full_text
     }
@@ -401,15 +483,10 @@ defmodule LLMClassifierTest do
     results
   end
 
-  defp normalize_acceptable_categories(nil), do: []
-  defp normalize_acceptable_categories(atom) when is_atom(atom), do: [atom]
-  defp normalize_acceptable_categories(string) when is_binary(string), do: [String.to_atom(string)]
-  defp normalize_acceptable_categories(list) when is_list(list), do: list
-
   defp run_negative_test(
          category_name,
          text,
-         expected_category,
+         pass_warn_categories,
          model_name,
          prompt_name,
          model_function,
@@ -427,9 +504,17 @@ defmodule LLMClassifierTest do
 
     test_name = format_text(text)
 
-    # Normalize category_name and expected_category to atoms if they're strings
+    # Normalize category_name to atom if it's a string
     category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
-    expected_atom = if is_binary(expected_category), do: String.to_atom(expected_category), else: expected_category
+
+    # Extract pass and warn lists from the tuple structure
+    {pass_list, warn_list} = case pass_warn_categories do
+      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn}
+      # Legacy support: if it's an atom, treat as expected pass category
+      atom when is_atom(atom) and not is_nil(atom) -> {[atom], []}
+      # No categories specified
+      _ -> {[], []}
+    end
 
     {status, details, results} = cond do
       # False positive - flagged with the category we're testing against - WARNING (not error!)
@@ -437,19 +522,43 @@ defmodule LLMClassifierTest do
         details = "Expected: NOT #{category_atom} | Got: #{Enum.join(categories, ", ")}"
         {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
 
-      # Correctly didn't flag, and either no specific category expected or got expected category
-      is_nil(expected_atom) or Enum.member?(categories, expected_atom) ->
-        details = "Expected: #{expected_atom || "any"}"
+      # Match any pass category - full success
+      pass_list != [] && Enum.any?(pass_list, &Enum.member?(categories, &1)) ->
+        matched = Enum.find(pass_list, &Enum.member?(categories, &1))
+        details = if length(pass_list) > 1 do
+          "Got: #{matched} (pass)"
+        else
+          nil
+        end
         {:passed, details, update_in(results, [:negative, :passed], &(&1 + 1))}
 
-      # Correctly didn't flag with wrong category, but check severity
-      has_same_or_greater_severity?(categories, expected_atom, label_severity_map) ->
-        details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+      # Match any warn category - warning
+      warn_list != [] && Enum.any?(warn_list, &Enum.member?(categories, &1)) ->
+        matched = Enum.find(warn_list, &Enum.member?(categories, &1))
+        details = "Expected pass category | Got: #{matched} (warn)"
         {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
+
+      # Check severity if pass categories specified
+      pass_list != [] &&
+      Enum.any?(pass_list, fn expected ->
+        has_same_or_greater_severity?(categories, expected, label_severity_map)
+      end) ->
+        details = "Expected: #{Enum.join(pass_list, "/")} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+        {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
+
+      # No specific categories - any non-matching category is fine
+      pass_list == [] && warn_list == [] ->
+        details = "Got: #{Enum.join(categories, ", ")} (not #{category_atom})"
+        {:passed, details, update_in(results, [:negative, :passed], &(&1 + 1))}
 
       # Wrong category - WARNING (never error for negative tests)
       true ->
-        details = "Expected: #{expected_atom} | Got: #{Enum.join(categories, ", ")}"
+        expected_str = case {pass_list, warn_list} do
+          {pass, []} -> Enum.join(pass, "/")
+          {[], warn} -> "not #{Enum.join(warn, "/")}"
+          {pass, warn} -> "#{Enum.join(pass, "/")} (or warn: #{Enum.join(warn, "/")})"
+        end
+        details = "Expected: #{expected_str} | Got: #{Enum.join(categories, ", ")}"
         {:warning, details, update_in(results, [:negative, :warned], &(&1 + 1))}
     end
 
@@ -459,7 +568,7 @@ defmodule LLMClassifierTest do
       status: status,
       expected_category: category_atom,
       actual_categories: categories,
-      acceptable_categories: [],
+      acceptable_categories: pass_list ++ warn_list,
       details: details,
       full_text: full_text
     }
