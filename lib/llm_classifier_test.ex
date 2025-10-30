@@ -305,28 +305,12 @@ defmodule LLMClassifierTest do
   defmacro positive(text, opts \\ []) do
     quote do
       # Support both old syntax (atom/list as second arg) and new syntax (pass:/warn: keywords)
-      {pass_categories, warn_categories} = case unquote(opts) do
-        # New syntax: keyword list with pass: and/or warn:
-        opts when is_list(opts) and (Keyword.keyword?(opts) or opts == []) ->
-          pass = Keyword.get(opts, :pass, []) |> List.wrap()
-          warn = Keyword.get(opts, :warn, []) |> List.wrap()
-
-          # Merge with category defaults
-          merged_pass = Enum.uniq(@current_category_defaults ++ pass)
-          {merged_pass, warn}
-
-        # Old syntax: single atom or list of atoms (treated as warnings for backward compatibility)
-        atom when is_atom(atom) and not is_nil(atom) ->
-          {@current_category_defaults, [atom]}
-
-        # Old syntax: list of atoms (treated as warnings for backward compatibility)
-        list when is_list(list) ->
-          {@current_category_defaults, list}
-
-        # No options or nil
-        _ ->
-          {@current_category_defaults, []}
-      end
+      {pass_categories, warn_categories} =
+        LLMClassifierTest.__parse_test_opts__(
+          unquote(opts),
+          @current_category_defaults,
+          :positive
+        )
 
       @current_tests [{:positive, unquote(text), {pass_categories, warn_categories}}]
     end
@@ -335,23 +319,71 @@ defmodule LLMClassifierTest do
   defmacro negative(text, opts \\ []) do
     quote do
       # Support both old syntax (atom as second arg) and new syntax (pass:/warn: keywords)
-      {pass_categories, warn_categories} = case unquote(opts) do
-        # New syntax: keyword list with pass: and/or warn:
-        opts when is_list(opts) and (Keyword.keyword?(opts) or opts == []) ->
-          pass = Keyword.get(opts, :pass, []) |> List.wrap()
-          warn = Keyword.get(opts, :warn, []) |> List.wrap()
-          {pass, warn}
-
-        # Old syntax: single atom (expected category to pass)
-        atom when is_atom(atom) and not is_nil(atom) ->
-          {[atom], []}
-
-        # No options or nil
-        _ ->
-          {[], []}
-      end
+      {pass_categories, warn_categories} =
+        LLMClassifierTest.__parse_test_opts__(
+          unquote(opts),
+          [],
+          :negative
+        )
 
       @current_tests [{:negative, unquote(text), {pass_categories, warn_categories}}]
+    end
+  end
+
+  @doc false
+  def __parse_test_opts__(opts, category_defaults, test_type) do
+    cond do
+      # Check if it's a keyword list by checking if first element is a tuple with atom key
+      is_list(opts) && opts != [] && is_tuple(hd(opts)) && is_atom(elem(hd(opts), 0)) ->
+        # New syntax: keyword list with pass: and/or warn:
+        pass = Keyword.get(opts, :pass, []) |> List.wrap()
+        warn = Keyword.get(opts, :warn, []) |> List.wrap()
+
+        if test_type == :positive do
+          # Merge with category defaults for positive tests
+          merged_pass = Enum.uniq(category_defaults ++ pass)
+          {merged_pass, warn}
+        else
+          {pass, warn}
+        end
+
+      # Empty list
+      is_list(opts) && opts == [] ->
+        if test_type == :positive do
+          {category_defaults, []}
+        else
+          {[], []}
+        end
+
+      # Old syntax: single atom
+      is_atom(opts) && not is_nil(opts) ->
+        if test_type == :positive do
+          # For positive tests, atom is acceptable pass (backward compat)
+          # Merge with category defaults
+          {Enum.uniq(category_defaults ++ [opts]), []}
+        else
+          # For negative tests, atom is expected pass category
+          {[opts], []}
+        end
+
+      # Old syntax: list of atoms (not keyword list)
+      is_list(opts) ->
+        if test_type == :positive do
+          # For positive tests, list are acceptable passes (backward compat)
+          # Merge with category defaults
+          {Enum.uniq(category_defaults ++ opts), []}
+        else
+          # For negative tests, shouldn't happen but treat as pass
+          {opts, []}
+        end
+
+      # nil or other
+      true ->
+        if test_type == :positive do
+          {category_defaults, []}
+        else
+          {[], []}
+        end
     end
   end
 
