@@ -485,6 +485,10 @@ defmodule LLMClassifierTest do
         end
         {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
 
+      # Old-style test (no explicit pass/warn) - check category_name match
+      pass_list == [] && warn_list == [] && Enum.member?(categories, category_atom) ->
+        {:passed, nil, update_in(results, [:positive, :passed], &(&1 + 1))}
+
       # Match any warn category - warning
       warn_list != [] && Enum.any?(warn_list, &Enum.member?(categories, &1)) ->
         matched = Enum.find(warn_list, &Enum.member?(categories, &1))
@@ -492,11 +496,10 @@ defmodule LLMClassifierTest do
         {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
 
       # Check if any returned category is same or greater severity - warning
-      pass_list != [] &&
-      Enum.any?(pass_list, fn expected ->
-        has_same_or_greater_severity?(categories, expected, label_severity_map)
-      end) ->
-        details = "Expected: #{Enum.join(pass_list, "/")} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
+      (pass_list != [] || (pass_list == [] && warn_list == [])) &&
+      has_same_or_greater_severity?(categories, category_atom, label_severity_map) ->
+        expected = if pass_list != [], do: Enum.join(pass_list, "/"), else: category_atom
+        details = "Expected: #{expected} | Got: #{Enum.join(categories, ", ")} (same/higher severity)"
         {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
 
       # No match - error
