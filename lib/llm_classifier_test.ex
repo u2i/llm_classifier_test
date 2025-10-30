@@ -330,6 +330,13 @@ defmodule LLMClassifierTest do
     end
   end
 
+  # Helper to format category name for display
+  defp format_category_name(name) when is_list(name) do
+    name |> Enum.map(&to_string/1) |> Enum.join(", ")
+  end
+  defp format_category_name(name) when is_atom(name), do: to_string(name)
+  defp format_category_name(name) when is_binary(name), do: name
+
   @doc false
   def __parse_test_opts__(opts, category_defaults, test_type) do
     cond do
@@ -388,7 +395,7 @@ defmodule LLMClassifierTest do
   end
 
   def run_category_tests(category_name, tests, model_name, prompt_name, model_function, label_severity_map \\ %{}, formatter \\ TerminalFormatter) do
-    formatter.format_header(to_string(category_name), model_name, prompt_name)
+    formatter.format_header(format_category_name(category_name), model_name, prompt_name)
 
     results =
       Enum.reduce(
@@ -449,8 +456,12 @@ defmodule LLMClassifierTest do
 
     test_name = format_text(text)
 
-    # Normalize category_name to atom if it's a string
-    category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
+    # Normalize category_name - if it's a list, use first element for expected category display
+    category_atom = cond do
+      is_binary(category_name) -> String.to_atom(category_name)
+      is_list(category_name) -> List.first(category_name)
+      true -> category_name
+    end
 
     # Extract pass and warn lists from the tuple structure
     {pass_list, warn_list} = case pass_warn_categories do
@@ -536,8 +547,12 @@ defmodule LLMClassifierTest do
 
     test_name = format_text(text)
 
-    # Normalize category_name to atom if it's a string
-    category_atom = if is_binary(category_name), do: String.to_atom(category_name), else: category_name
+    # Normalize category_name - if it's a list, use first element for expected category display
+    category_atom = cond do
+      is_binary(category_name) -> String.to_atom(category_name)
+      is_list(category_name) -> List.first(category_name)
+      true -> category_name
+    end
 
     # Extract pass and warn lists from the tuple structure
     {pass_list, warn_list} = case pass_warn_categories do
