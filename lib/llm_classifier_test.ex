@@ -155,12 +155,13 @@ defmodule LLMClassifierTest do
             non_chosen_categories = all_valid_categories -- result.actual_categories
 
             # Get the text for non-chosen categories and format with alignment
+            # Align under "  Valid: " which is 9 characters (2 spaces + "Valid: ")
             non_chosen_categories
             |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
             |> Enum.reject(&is_nil/1)
             |> case do
               [] -> "_all valid responses were chosen_"
-              texts -> Enum.join(texts, "\n            ")
+              texts -> Enum.join(texts, "\n         ")
             end
           else
             # Fallback to showing category names if all_responses not available
