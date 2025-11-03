@@ -320,29 +320,29 @@ defmodule LLMClassifierTest do
 
   defmacro positive(text, opts \\ []) do
     quote do
-      # Support both old syntax (atom/list as second arg) and new syntax (pass:/warn: keywords)
-      {pass_categories, warn_categories} =
+      # Support both old syntax (atom/list as second arg) and new syntax (pass:/warn:/require_all: keywords)
+      {pass_categories, warn_categories, require_all} =
         LLMClassifierTest.__parse_test_opts__(
           unquote(opts),
           @current_category_defaults,
           :positive
         )
 
-      @current_tests [{:positive, unquote(text), {pass_categories, warn_categories}}]
+      @current_tests [{:positive, unquote(text), {pass_categories, warn_categories, require_all}}]
     end
   end
 
   defmacro negative(text, opts \\ []) do
     quote do
       # Support both old syntax (atom as second arg) and new syntax (pass:/warn: keywords)
-      {pass_categories, warn_categories} =
+      {pass_categories, warn_categories, require_all} =
         LLMClassifierTest.__parse_test_opts__(
           unquote(opts),
           [],
           :negative
         )
 
-      @current_tests [{:negative, unquote(text), {pass_categories, warn_categories}}]
+      @current_tests [{:negative, unquote(text), {pass_categories, warn_categories, require_all}}]
     end
   end
 
@@ -358,24 +358,25 @@ defmodule LLMClassifierTest do
     cond do
       # Check if it's a keyword list by checking if first element is a tuple with atom key
       is_list(opts) && opts != [] && is_tuple(hd(opts)) && is_atom(elem(hd(opts), 0)) ->
-        # New syntax: keyword list with pass: and/or warn:
+        # New syntax: keyword list with pass: and/or warn: and optional require_all:
         pass = Keyword.get(opts, :pass, []) |> List.wrap()
         warn = Keyword.get(opts, :warn, []) |> List.wrap()
+        require_all = Keyword.get(opts, :require_all, false)
 
         if test_type == :positive do
           # Merge with category defaults for positive tests
           merged_pass = Enum.uniq(category_defaults ++ pass)
-          {merged_pass, warn}
+          {merged_pass, warn, require_all}
         else
-          {pass, warn}
+          {pass, warn, require_all}
         end
 
       # Empty list
       is_list(opts) && opts == [] ->
         if test_type == :positive do
-          {category_defaults, []}
+          {category_defaults, [], false}
         else
-          {[], []}
+          {[], [], false}
         end
 
       # Old syntax: single atom
@@ -383,10 +384,10 @@ defmodule LLMClassifierTest do
         if test_type == :positive do
           # For positive tests, atom is acceptable pass (backward compat)
           # Merge with category defaults
-          {Enum.uniq(category_defaults ++ [opts]), []}
+          {Enum.uniq(category_defaults ++ [opts]), [], false}
         else
           # For negative tests, atom is expected pass category
-          {[opts], []}
+          {[opts], [], false}
         end
 
       # Old syntax: list of atoms (not keyword list)
@@ -394,18 +395,18 @@ defmodule LLMClassifierTest do
         if test_type == :positive do
           # For positive tests, list are acceptable passes (backward compat)
           # Merge with category defaults
-          {Enum.uniq(category_defaults ++ opts), []}
+          {Enum.uniq(category_defaults ++ opts), [], false}
         else
           # For negative tests, shouldn't happen but treat as pass
-          {opts, []}
+          {opts, [], false}
         end
 
       # nil or other
       true ->
         if test_type == :positive do
-          {category_defaults, []}
+          {category_defaults, [], false}
         else
-          {[], []}
+          {[], [], false}
         end
     end
   end
@@ -486,19 +487,30 @@ defmodule LLMClassifierTest do
     end
 
     # Extract pass and warn lists from the tuple structure
-    {pass_list, warn_list} = case pass_warn_categories do
-      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn}
+    {pass_list, warn_list, require_all} = case pass_warn_categories do
+      {pass, warn, req_all} when is_list(pass) and is_list(warn) -> {pass, warn, req_all}
+      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn, false}
       # Legacy support: if it's just a list, treat as warnings
-      list when is_list(list) -> {[], list}
+      list when is_list(list) -> {[], list, false}
       # Legacy support: if it's an atom, treat as warning
-      atom when is_atom(atom) and not is_nil(atom) -> {[], [atom]}
+      atom when is_atom(atom) and not is_nil(atom) -> {[], [atom], false}
       # No categories specified
-      _ -> {[], []}
+      _ -> {[], [], false}
     end
 
     {status, details, results} = cond do
-      # Match any pass category - full success
-      pass_list != [] && Enum.any?(pass_list, &Enum.member?(categories, &1)) ->
+      # Match pass categories - check if all required or any
+      pass_list != [] && require_all && Enum.all?(pass_list, &Enum.member?(categories, &1)) ->
+        # All required categories present - full success
+        details = if length(pass_list) > 1 do
+          "Got all required: #{Enum.join(pass_list, ", ")}"
+        else
+          nil
+        end
+        {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
+
+      pass_list != [] && not require_all && Enum.any?(pass_list, &Enum.member?(categories, &1)) ->
+        # Any pass category present - full success
         matched = Enum.find(pass_list, &Enum.member?(categories, &1))
         details = if length(pass_list) > 1 do
           "Got: #{matched} (pass)"
@@ -587,12 +599,13 @@ defmodule LLMClassifierTest do
     end
 
     # Extract pass and warn lists from the tuple structure
-    {pass_list, warn_list} = case pass_warn_categories do
-      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn}
+    {pass_list, warn_list, _require_all} = case pass_warn_categories do
+      {pass, warn, req_all} when is_list(pass) and is_list(warn) -> {pass, warn, req_all}
+      {pass, warn} when is_list(pass) and is_list(warn) -> {pass, warn, false}
       # Legacy support: if it's an atom, treat as expected pass category
-      atom when is_atom(atom) and not is_nil(atom) -> {[atom], []}
+      atom when is_atom(atom) and not is_nil(atom) -> {[atom], [], false}
       # No categories specified
-      _ -> {[], []}
+      _ -> {[], [], false}
     end
 
     {status, details, results} = cond do
