@@ -11,7 +11,8 @@ defmodule LLMClassifierTest do
       :actual_categories, # List of categories returned
       :acceptable_categories, # List of acceptable fallback categories
       :details,          # Additional details/reason
-      :full_text         # Full text of the chosen response (optional)
+      :full_text,        # Full text of the chosen response (optional)
+      :all_responses     # Map of all category => text responses (optional)
     ]
 
     @type test_type :: :positive | :negative
@@ -25,7 +26,8 @@ defmodule LLMClassifierTest do
       actual_categories: [atom()],
       acceptable_categories: [atom()],
       details: String.t(),
-      full_text: String.t() | nil
+      full_text: String.t() | nil,
+      all_responses: map() | nil
     }
   end
 
@@ -140,16 +142,35 @@ defmodule LLMClassifierTest do
       end
       IO.puts("  **Chosen**: #{chosen}")
 
-      # Show valid responses
+      # Show valid responses (non-chosen acceptable responses)
       valid = case result.test_type do
         :positive ->
-          # For positive tests, show expected + acceptable
-          all_valid = [result.expected_category | result.acceptable_categories]
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
-          |> Enum.map(&to_string/1)
-          |> Enum.join(", ")
-          all_valid
+          # For positive tests, show text of acceptable responses that weren't chosen
+          if result.all_responses && is_map(result.all_responses) do
+            all_valid_categories = [result.expected_category | result.acceptable_categories]
+            |> Enum.reject(&is_nil/1)
+            |> Enum.uniq()
+
+            # Filter out the categories that were actually chosen
+            non_chosen_categories = all_valid_categories -- result.actual_categories
+
+            # Get the text for non-chosen categories and format with alignment
+            non_chosen_categories
+            |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
+            |> Enum.reject(&is_nil/1)
+            |> case do
+              [] -> "_all valid responses were chosen_"
+              texts -> Enum.join(texts, "\n            ")
+            end
+          else
+            # Fallback to showing category names if all_responses not available
+            all_valid = [result.expected_category | result.acceptable_categories]
+            |> Enum.reject(&is_nil/1)
+            |> Enum.uniq()
+            |> Enum.map(&to_string/1)
+            |> Enum.join(", ")
+            all_valid
+          end
         :negative ->
           # For negative tests, show what was expected (not the category being tested)
           if result.details && String.contains?(result.details, "Expected:") do
@@ -442,10 +463,11 @@ defmodule LLMClassifierTest do
        ) do
     result = model_function.(text, model_name, prompt_name)
 
-    # Support both old format (list) and new format (map with categories and full_text)
-    {categories, full_text} = case result do
-      %{categories: cats, full_text: text} -> {cats, text}
-      cats when is_list(cats) -> {cats, nil}
+    # Support both old format (list) and new format (map with categories, full_text, and all_responses)
+    {categories, full_text, all_responses} = case result do
+      %{categories: cats, full_text: text, all_responses: all_resp} -> {cats, text, all_resp}
+      %{categories: cats, full_text: text} -> {cats, text, nil}
+      cats when is_list(cats) -> {cats, nil, nil}
     end
 
     # Normalize categories to atoms (some classifiers return strings)
@@ -521,7 +543,8 @@ defmodule LLMClassifierTest do
       actual_categories: categories,
       acceptable_categories: pass_list ++ warn_list,
       details: details,
-      full_text: full_text
+      full_text: full_text,
+      all_responses: all_responses
     }
 
     formatter.format_test_result(test_result)
@@ -541,10 +564,11 @@ defmodule LLMClassifierTest do
        ) do
     result = model_function.(text, model_name, prompt_name)
 
-    # Support both old format (list) and new format (map with categories and full_text)
-    {categories, full_text} = case result do
-      %{categories: cats, full_text: text} -> {cats, text}
-      cats when is_list(cats) -> {cats, nil}
+    # Support both old format (list) and new format (map with categories, full_text, and all_responses)
+    {categories, full_text, all_responses} = case result do
+      %{categories: cats, full_text: text, all_responses: all_resp} -> {cats, text, all_resp}
+      %{categories: cats, full_text: text} -> {cats, text, nil}
+      cats when is_list(cats) -> {cats, nil, nil}
     end
 
     # Normalize categories to atoms (some classifiers return strings)
@@ -624,7 +648,8 @@ defmodule LLMClassifierTest do
       actual_categories: categories,
       acceptable_categories: pass_list ++ warn_list,
       details: details,
-      full_text: full_text
+      full_text: full_text,
+      all_responses: all_responses
     }
 
     formatter.format_test_result(test_result)
