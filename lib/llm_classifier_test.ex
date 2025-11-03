@@ -130,7 +130,37 @@ defmodule LLMClassifierTest do
       IO.puts("#{status_symbol} Question: #{question} \"#{answer}\"")
 
       # Show chosen response (use full_text if available, otherwise show categories)
+      # Mark invalid responses for positive tests
       chosen = cond do
+        result.full_text && result.full_text != "" && result.all_responses && is_map(result.all_responses) && result.test_type == :positive ->
+          # For positive tests with all_responses, mark invalid chosen items
+          all_valid_categories = [result.expected_category | result.acceptable_categories]
+          |> Enum.reject(&is_nil/1)
+          |> Enum.uniq()
+          |> MapSet.new()
+
+          # Split chosen responses into lines and mark invalid ones
+          result.full_text
+          |> String.split("\n")
+          |> Enum.map(fn line ->
+            # Find which category this text belongs to
+            matching_category = result.all_responses
+            |> Enum.find(fn {_cat, text} -> String.trim(text) == String.trim(line) end)
+
+            case matching_category do
+              {cat, _text} when not is_nil(cat) ->
+                if MapSet.member?(all_valid_categories, cat) do
+                  line  # Valid - no marking
+                else
+                  # Invalid - mark based on test status
+                  marker = if result.status == :error, do: "❌", else: "⚠️"
+                  "#{line} #{marker}"
+                end
+              _ -> line  # Can't determine, don't mark
+            end
+          end)
+          |> Enum.join("\n")
+
         result.full_text && result.full_text != "" ->
           result.full_text
         Enum.empty?(result.actual_categories) ->
