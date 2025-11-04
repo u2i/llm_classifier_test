@@ -125,9 +125,9 @@ defmodule LLMClassifierTest do
 
       # Determine status symbol
       status_symbol = case result.status do
-        :passed -> "✓"
-        :warning -> "⚠"
-        :error -> "✗"
+        :passed -> "✅"
+        :warning -> "⚠️"
+        :error -> "❌"
       end
 
       # Format the output
@@ -163,9 +163,9 @@ defmodule LLMClassifierTest do
               cat when not is_nil(cat) ->
                 cond do
                   MapSet.member?(pass_set, cat) ->
-                    "#{line} ✓ [PASS]"
+                    "#{line} ✅ [PASS]"
                   MapSet.member?(warn_set, cat) ->
-                    "#{line} ⚠ [WARN]"
+                    "#{line} ⚠️ [WARN]"
                   true ->
                     "#{line} ❌ [INVALID]"
                 end
@@ -205,17 +205,17 @@ defmodule LLMClassifierTest do
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
-              IO.puts("  ✓ Pass (not matched): _all pass responses were chosen_")
+              IO.puts("  ✅ Pass (not matched): _all pass responses were chosen_")
             else
-              IO.puts("  ✓ Pass (not matched):")
+              IO.puts("  ✅ Pass (not matched):")
               Enum.each(pass_texts, fn text -> IO.puts("    - #{text}") end)
             end
 
             # Show warn responses
             if Enum.empty?(warn_texts) do
-              IO.puts("  ⚠ Warn (not matched): _all warn responses were chosen_")
+              IO.puts("  ⚠️ Warn (not matched): _all warn responses were chosen_")
             else
-              IO.puts("  ⚠ Warn (not matched):")
+              IO.puts("  ⚠️ Warn (not matched):")
               Enum.each(warn_texts, fn text -> IO.puts("    - #{text}") end)
             end
           else
