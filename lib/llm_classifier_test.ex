@@ -146,8 +146,13 @@ defmodule LLMClassifierTest do
           |> String.split("\n")
           |> Enum.map(fn line ->
             # Find which category this text belongs to
+            # Handle both single-line and multi-line phrases
             matching_category = result.all_responses
-            |> Enum.find(fn {_cat, text} -> String.trim(text) == String.trim(line) end)
+            |> Enum.find(fn {_cat, text} ->
+              # Split phrase text into lines and check if this line matches any of them
+              phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
+              String.trim(line) in phrase_lines
+            end)
 
             case matching_category do
               {cat, _text} when not is_nil(cat) ->
