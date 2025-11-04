@@ -10,6 +10,8 @@ defmodule LLMClassifierTest do
       :expected_category, # The category being tested
       :actual_categories, # List of categories returned
       :acceptable_categories, # List of acceptable fallback categories
+      :pass_list,        # List of pass categories (excellent matches)
+      :warn_list,        # List of warn categories (acceptable but marginal)
       :details,          # Additional details/reason
       :full_text,        # Full text of the chosen response (optional)
       :all_responses     # Map of all category => text responses (optional)
@@ -25,6 +27,8 @@ defmodule LLMClassifierTest do
       expected_category: atom(),
       actual_categories: [atom()],
       acceptable_categories: [atom()],
+      pass_list: [atom()],
+      warn_list: [atom()],
       details: String.t(),
       full_text: String.t() | nil,
       all_responses: map() | nil
@@ -172,39 +176,53 @@ defmodule LLMClassifierTest do
       end
       IO.puts("  **Chosen**: #{chosen}")
 
-      # Show valid responses (non-chosen acceptable responses)
-      valid = case result.test_type do
+      # Show pass and warn responses separately (non-chosen acceptable responses)
+      case result.test_type do
         :positive ->
-          # For positive tests, show text of acceptable responses that weren't chosen
+          # For positive tests, show text of acceptable responses that weren't chosen, split by pass/warn
           if result.all_responses && is_map(result.all_responses) do
-            all_valid_categories = [result.expected_category | result.acceptable_categories]
-            |> Enum.reject(&is_nil/1)
-            |> Enum.uniq()
-
-            # Filter out the categories that were actually chosen
-            non_chosen_categories = all_valid_categories -- result.actual_categories
-
-            # Get the text for non-chosen categories and format with alignment
-            # Align under "  Valid: " which is 9 characters (2 spaces + "Valid: ")
-            non_chosen_categories
+            # Get non-chosen pass responses
+            non_chosen_pass = (result.pass_list || []) -- result.actual_categories
+            pass_texts = non_chosen_pass
             |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
             |> Enum.reject(&is_nil/1)
-            |> case do
-              [] -> "_all valid responses were chosen_"
-              texts -> Enum.join(texts, "\n         ")
+
+            # Get non-chosen warn responses
+            non_chosen_warn = (result.warn_list || []) -- result.actual_categories
+            warn_texts = non_chosen_warn
+            |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
+            |> Enum.reject(&is_nil/1)
+
+            # Show pass responses
+            if Enum.empty?(pass_texts) do
+              IO.puts("  Pass (not matched): _all pass responses were chosen_")
+            else
+              IO.puts("  Pass (not matched):")
+              Enum.each(pass_texts, fn text -> IO.puts("    - #{text}") end)
+            end
+
+            # Show warn responses
+            if Enum.empty?(warn_texts) do
+              IO.puts("  Warn (not matched): _all warn responses were chosen_")
+            else
+              IO.puts("  Warn (not matched):")
+              Enum.each(warn_texts, fn text -> IO.puts("    - #{text}") end)
             end
           else
             # Fallback to showing category names if all_responses not available
-            all_valid = [result.expected_category | result.acceptable_categories]
-            |> Enum.reject(&is_nil/1)
-            |> Enum.uniq()
+            pass_cats = (result.pass_list || [])
             |> Enum.map(&to_string/1)
             |> Enum.join(", ")
-            all_valid
+            IO.puts("  Pass: #{pass_cats}")
+
+            warn_cats = (result.warn_list || [])
+            |> Enum.map(&to_string/1)
+            |> Enum.join(", ")
+            IO.puts("  Warn: #{warn_cats}")
           end
         :negative ->
           # For negative tests, show what was expected (not the category being tested)
-          if result.details && String.contains?(result.details, "Expected:") do
+          valid = if result.details && String.contains?(result.details, "Expected:") do
             # Extract expected from details
             result.details
             |> String.split("|")
@@ -214,8 +232,9 @@ defmodule LLMClassifierTest do
           else
             "_any except #{result.expected_category}_"
           end
+          IO.puts("  Valid: #{valid}")
       end
-      IO.puts("  Valid: #{valid}\n")
+      IO.puts("")
       :ok
     end
 
@@ -528,7 +547,22 @@ defmodule LLMClassifierTest do
       _ -> {[], [], false}
     end
 
+    # First check if ALL returned categories are acceptable (in pass or warn lists)
+    acceptable_list = pass_list ++ warn_list
+    all_acceptable = acceptable_list != [] && Enum.all?(categories, &Enum.member?(acceptable_list, &1))
+
     {status, details, results} = cond do
+      # Check if all returned responses are unacceptable (not in pass or warn)
+      acceptable_list != [] && not all_acceptable ->
+        unacceptable = Enum.filter(categories, &(not Enum.member?(acceptable_list, &1)))
+        expected_str = case {pass_list, warn_list} do
+          {pass, []} -> Enum.join(pass, "/")
+          {[], warn} -> "not #{Enum.join(warn, "/")}"
+          {pass, warn} -> "#{Enum.join(pass, "/")} (or warn: #{Enum.join(warn, "/")})"
+        end
+        details = "Expected: #{expected_str} | Got unacceptable: #{Enum.join(unacceptable, ", ")} (also got: #{Enum.join(categories -- unacceptable, ", ")})"
+        {:error, details, update_in(results, [:positive, :errored], &(&1 + 1))}
+
       # Match pass categories - check if all required or any
       pass_list != [] && require_all && Enum.all?(pass_list, &Enum.member?(categories, &1)) ->
         # All required categories present - full success
@@ -540,14 +574,24 @@ defmodule LLMClassifierTest do
         {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
 
       pass_list != [] && not require_all && Enum.any?(pass_list, &Enum.member?(categories, &1)) ->
-        # Any pass category present - full success
-        matched = Enum.find(pass_list, &Enum.member?(categories, &1))
-        details = if length(pass_list) > 1 do
-          "Got: #{matched} (pass)"
+        # Any pass category present - check if any are in warn list
+        has_warn = warn_list != [] && Enum.any?(warn_list, &Enum.member?(categories, &1))
+
+        if has_warn do
+          # At least one is in warn list - warning
+          matched_warn = Enum.filter(categories, &Enum.member?(warn_list, &1))
+          details = "Expected pass category | Got warn: #{Enum.join(matched_warn, ", ")}"
+          {:warning, details, update_in(results, [:positive, :warned], &(&1 + 1))}
         else
-          nil
+          # All are in pass list - full success
+          matched = Enum.find(pass_list, &Enum.member?(categories, &1))
+          details = if length(pass_list) > 1 do
+            "Got: #{matched} (pass)"
+          else
+            nil
+          end
+          {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
         end
-        {:passed, details, update_in(results, [:positive, :passed], &(&1 + 1))}
 
       # Old-style test (no explicit pass/warn) - check category_name match
       pass_list == [] && warn_list == [] && Enum.member?(categories, category_atom) ->
@@ -585,6 +629,8 @@ defmodule LLMClassifierTest do
       expected_category: category_atom,
       actual_categories: categories,
       acceptable_categories: pass_list ++ warn_list,
+      pass_list: pass_list,
+      warn_list: warn_list,
       details: details,
       full_text: full_text,
       all_responses: all_responses
@@ -691,6 +737,8 @@ defmodule LLMClassifierTest do
       expected_category: category_atom,
       actual_categories: categories,
       acceptable_categories: pass_list ++ warn_list,
+      pass_list: pass_list,
+      warn_list: warn_list,
       details: details,
       full_text: full_text,
       all_responses: all_responses
