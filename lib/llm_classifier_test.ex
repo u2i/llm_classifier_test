@@ -137,13 +137,11 @@ defmodule LLMClassifierTest do
       # Mark invalid responses for positive tests
       chosen = cond do
         result.full_text && result.full_text != "" && result.all_responses && is_map(result.all_responses) && result.test_type == :positive ->
-          # For positive tests with all_responses, mark invalid chosen items
-          all_valid_categories = [result.expected_category | result.acceptable_categories]
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
-          |> MapSet.new()
+          # For positive tests with all_responses, label each chosen response
+          pass_set = MapSet.new(result.pass_list || [])
+          warn_set = MapSet.new(result.warn_list || [])
 
-          # Split chosen responses into lines and mark invalid ones
+          # Split chosen responses into lines and label each one
           result.full_text
           |> String.split("\n")
           |> Enum.map(fn line ->
@@ -153,14 +151,15 @@ defmodule LLMClassifierTest do
 
             case matching_category do
               {cat, _text} when not is_nil(cat) ->
-                if MapSet.member?(all_valid_categories, cat) do
-                  line  # Valid - no marking
-                else
-                  # Invalid - mark based on test status
-                  marker = if result.status == :error, do: "❌", else: "⚠️"
-                  "#{line} #{marker}"
+                cond do
+                  MapSet.member?(pass_set, cat) ->
+                    "#{line} ✓ [PASS]"
+                  MapSet.member?(warn_set, cat) ->
+                    "#{line} ⚠ [WARN]"
+                  true ->
+                    "#{line} ❌ [INVALID]"
                 end
-              _ -> line  # Can't determine, don't mark
+              _ -> line  # Can't determine, don't label
             end
           end)
           |> Enum.join("\n")
