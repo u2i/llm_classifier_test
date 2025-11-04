@@ -145,17 +145,22 @@ defmodule LLMClassifierTest do
           result.full_text
           |> String.split("\n")
           |> Enum.map(fn line ->
-            # Find which category this text belongs to
+            # Find which category this text belongs to using reverse lookup (text => type)
             # Handle both single-line and multi-line phrases
-            matching_category = result.all_responses
-            |> Enum.find(fn {_cat, text} ->
-              # Split phrase text into lines and check if this line matches any of them
-              phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
-              String.trim(line) in phrase_lines
-            end)
+            trimmed_line = String.trim(line)
 
-            case matching_category do
-              {cat, _text} when not is_nil(cat) ->
+            # First try direct lookup
+            cat = Map.get(result.all_responses, line) ||
+                  Map.get(result.all_responses, trimmed_line) ||
+                  # If not found, check if this line is part of a multi-line phrase
+                  result.all_responses
+                  |> Enum.find_value(fn {text, type} ->
+                    phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
+                    if trimmed_line in phrase_lines, do: type, else: nil
+                  end)
+
+            case cat do
+              cat when not is_nil(cat) ->
                 cond do
                   MapSet.member?(pass_set, cat) ->
                     "#{line} ✓ [PASS]"
@@ -185,17 +190,18 @@ defmodule LLMClassifierTest do
         :positive ->
           # For positive tests, show text of acceptable responses that weren't chosen, split by pass/warn
           if result.all_responses && is_map(result.all_responses) do
-            # Get non-chosen pass responses
+            # Get non-chosen pass/warn categories
             non_chosen_pass = (result.pass_list || []) -- result.actual_categories
-            pass_texts = non_chosen_pass
-            |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
-            |> Enum.reject(&is_nil/1)
-
-            # Get non-chosen warn responses
             non_chosen_warn = (result.warn_list || []) -- result.actual_categories
-            warn_texts = non_chosen_warn
-            |> Enum.map(fn cat -> Map.get(result.all_responses, cat) end)
-            |> Enum.reject(&is_nil/1)
+
+            # all_responses is now text => type, so filter by type to get texts
+            pass_texts = result.all_responses
+            |> Enum.filter(fn {_text, type} -> type in non_chosen_pass end)
+            |> Enum.map(fn {text, _type} -> text end)
+
+            warn_texts = result.all_responses
+            |> Enum.filter(fn {_text, type} -> type in non_chosen_warn end)
+            |> Enum.map(fn {text, _type} -> text end)
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
