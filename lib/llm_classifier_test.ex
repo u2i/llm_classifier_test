@@ -211,10 +211,8 @@ defmodule LLMClassifierTest do
               Enum.each(pass_texts, fn text -> IO.puts("    - #{text}") end)
             end
 
-            # Show warn responses
-            if Enum.empty?(warn_texts) do
-              IO.puts("  ⚠ Warn (not matched): _all warn responses were chosen_")
-            else
+            # Show warn responses only if there are any remaining (not chosen)
+            unless Enum.empty?(warn_texts) do
               IO.puts("  ⚠ Warn (not matched):")
               Enum.each(warn_texts, fn text -> IO.puts("    - #{text}") end)
             end
