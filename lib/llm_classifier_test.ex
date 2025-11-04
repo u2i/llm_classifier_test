@@ -557,6 +557,14 @@ defmodule LLMClassifierTest do
       _ -> {[], [], false}
     end
 
+    # Debug: print categories for troubleshooting
+    if String.contains?(test_name, "I got in trouble") do
+      IO.puts("\n🔍 DEBUG: #{test_name}")
+      IO.puts("  Categories returned: #{inspect(categories)}")
+      IO.puts("  Pass list: #{inspect(pass_list)}")
+      IO.puts("  Warn list: #{inspect(warn_list)}")
+    end
+
     # First check if ALL returned categories are acceptable (in pass or warn lists)
     acceptable_list = pass_list ++ warn_list
     all_acceptable = acceptable_list != [] && Enum.all?(categories, &Enum.member?(acceptable_list, &1))
