@@ -205,17 +205,17 @@ defmodule LLMClassifierTest do
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
-              IO.puts("  ✅ Pass (not matched): _all pass responses were chosen_")
+              IO.puts("  ✓ Pass (not matched): _all pass responses were chosen_")
             else
-              IO.puts("  ✅ Pass (not matched):")
+              IO.puts("  ✓ Pass (not matched):")
               Enum.each(pass_texts, fn text -> IO.puts("    - #{text}") end)
             end
 
             # Show warn responses
             if Enum.empty?(warn_texts) do
-              IO.puts("  ⚠️ Warn (not matched): _all warn responses were chosen_")
+              IO.puts("  ⚠ Warn (not matched): _all warn responses were chosen_")
             else
-              IO.puts("  ⚠️ Warn (not matched):")
+              IO.puts("  ⚠ Warn (not matched):")
               Enum.each(warn_texts, fn text -> IO.puts("    - #{text}") end)
             end
           else
