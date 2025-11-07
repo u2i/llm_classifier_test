@@ -105,6 +105,31 @@ defmodule LLMClassifierTest do
     end
   end
 
+  defmodule PromptDumper do
+    @moduledoc """
+    Formatter that dumps the prompt instead of running tests.
+    """
+    @behaviour LLMClassifierTest.Formatter
+
+    @impl true
+    def format_header(_category_name, _model_name, _prompt_name) do
+      # No header needed for prompt dumping
+      :ok
+    end
+
+    @impl true
+    def format_test_result(%LLMClassifierTest.TestResult{} = _result) do
+      # Prompt dumper doesn't format test results (tests don't run)
+      :ok
+    end
+
+    @impl true
+    def format_summary(_summary) do
+      # No summary needed when dumping prompts
+      :ok
+    end
+  end
+
   defmodule MarkdownFormatter do
     @moduledoc """
     Markdown formatter for test results.
@@ -303,30 +328,50 @@ defmodule LLMClassifierTest do
       @before_compile LLMClassifierTest
 
       def run_all_tests(model_name, prompt_name, opts \\ []) do
-        formatter = Keyword.get(opts, :formatter, LLMClassifierTest.TerminalFormatter)
+        dump_prompt = Keyword.get(opts, :dump_prompt, false)
+        test_case_filter = Keyword.get(opts, :test_case)
+        formatter = if dump_prompt do
+          LLMClassifierTest.PromptDumper
+        else
+          Keyword.get(opts, :formatter, LLMClassifierTest.TerminalFormatter)
+        end
+
         categories = categories()
-        IO.puts("Running all tests for model: #{model_name}, prompt: #{prompt_name}")
 
-        results =
-          Enum.map(categories, fn {name, tests} ->
-            category_results =
-              LLMClassifierTest.run_category_tests(
-                name,
-                tests,
-                model_name,
-                prompt_name,
-                @model_function,
-                @label_severity_map,
-                formatter
-              )
+        if dump_prompt do
+          # Dump prompt mode - find matching test case and dump its prompt
+          LLMClassifierTest.dump_prompt(
+            categories,
+            model_name,
+            prompt_name,
+            @model_function,
+            test_case_filter
+          )
+        else
+          # Normal test mode
+          IO.puts("Running all tests for model: #{model_name}, prompt: #{prompt_name}")
 
-            {name, category_results}
-          end)
+          results =
+            Enum.map(categories, fn {name, tests} ->
+              category_results =
+                LLMClassifierTest.run_category_tests(
+                  name,
+                  tests,
+                  model_name,
+                  prompt_name,
+                  @model_function,
+                  @label_severity_map,
+                  formatter
+                )
 
-        overall_results = LLMClassifierTest.aggregate_results(results)
-        summary = LLMClassifierTest.print_overall_summary(overall_results, formatter)
+              {name, category_results}
+            end)
 
-        {__MODULE__, overall_results, summary}
+          overall_results = LLMClassifierTest.aggregate_results(results)
+          summary = LLMClassifierTest.print_overall_summary(overall_results, formatter)
+
+          {__MODULE__, overall_results, summary}
+        end
       end
 
       defoverridable run_all_tests: 2
@@ -520,7 +565,7 @@ defmodule LLMClassifierTest do
          label_severity_map,
          formatter
        ) do
-    result = model_function.(text, model_name, prompt_name)
+    result = call_model_function(model_function, text, model_name, prompt_name)
 
     # Support both old format (list) and new format (map with categories, full_text, and all_responses)
     {categories, full_text, all_responses} = case result do
@@ -659,7 +704,7 @@ defmodule LLMClassifierTest do
          label_severity_map,
          formatter
        ) do
-    result = model_function.(text, model_name, prompt_name)
+    result = call_model_function(model_function, text, model_name, prompt_name)
 
     # Support both old format (list) and new format (map with categories, full_text, and all_responses)
     {categories, full_text, all_responses} = case result do
@@ -845,6 +890,131 @@ defmodule LLMClassifierTest do
 
       _ ->
         text
+    end
+  end
+
+  @doc """
+  Dumps the prompt that would be sent to the LLM for a specific test case.
+  If test_case_filter is provided, only shows prompts matching that filter (case-insensitive substring match).
+  Otherwise, shows prompts for all test cases.
+  """
+  def dump_prompt(categories, model_name, prompt_name, model_function, test_case_filter \\ nil) do
+    IO.puts("=" <> String.duplicate("=", 79))
+    IO.puts("PROMPT DUMP MODE")
+    IO.puts("=" <> String.duplicate("=", 79))
+    IO.puts("Model: #{model_name}")
+    IO.puts("Prompt: #{prompt_name}")
+    if test_case_filter do
+      IO.puts("Filter: \"#{test_case_filter}\"")
+    end
+    IO.puts("")
+
+    found_any = Enum.reduce(categories, false, fn {category_name, tests}, found_acc ->
+      Enum.reduce(tests, found_acc, fn test, inner_acc ->
+        case test do
+          {:positive, text, _mode} ->
+            dump_test_prompt(category_name, text, model_name, prompt_name, model_function, test_case_filter) || inner_acc
+
+          {:negative, text, _expected} ->
+            dump_test_prompt(category_name, text, model_name, prompt_name, model_function, test_case_filter) || inner_acc
+
+          _ ->
+            inner_acc
+        end
+      end)
+    end)
+
+    if not found_any do
+      if test_case_filter do
+        IO.puts("No test cases found matching filter: \"#{test_case_filter}\"")
+        IO.puts("\nTip: Use a substring of the question or answer to filter test cases.")
+        IO.puts("Example: --test-case \"missing classes\" or --test-case \"worried\"")
+      else
+        IO.puts("No test cases found.")
+      end
+    end
+
+    IO.puts("\n" <> String.duplicate("=", 80))
+    :ok
+  end
+
+  defp dump_test_prompt(category_name, text, model_name, prompt_name, model_function, filter) do
+    test_name = format_text(text)
+
+    # Check if this test matches the filter (if provided)
+    matches_filter = if filter do
+      # Case-insensitive substring match on the formatted test name
+      String.downcase(test_name) =~ String.downcase(filter)
+    else
+      true
+    end
+
+    if matches_filter do
+      IO.puts("-" <> String.duplicate("-", 79))
+      IO.puts("Category: #{format_category_name(category_name)}")
+      IO.puts("Test: #{test_name}")
+      IO.puts("-" <> String.duplicate("-", 79))
+
+      # Call the model function with a special flag to get the prompt
+      # We'll need to modify the classifier to support this
+      case try_get_prompt(text, model_name, prompt_name, model_function) do
+        {:ok, prompt, input_text} ->
+          IO.puts("\n### SYSTEM PROMPT ###")
+          IO.puts(prompt)
+          IO.puts("\n### USER INPUT ###")
+          IO.puts(input_text)
+          IO.puts("")
+
+        {:error, :not_supported} ->
+          IO.puts("\nPrompt dumping is not supported by this model function.")
+          IO.puts("To enable prompt dumping, the model function should accept a 4th parameter:")
+          IO.puts("  def classify(text, model_name, prompt_name, opts \\\\ [])")
+          IO.puts("And when opts[:dump_prompt] is true, return: {:dump_prompt, prompt, input_text}")
+          IO.puts("")
+
+        {:error, reason} ->
+          IO.puts("\nError getting prompt: #{inspect(reason)}")
+          IO.puts("")
+      end
+
+      true  # Found a match
+    else
+      false  # No match
+    end
+  end
+
+  defp try_get_prompt(text, model_name, prompt_name, model_function) do
+    try do
+      # Try calling with opts parameter
+      result = model_function.(text, model_name, prompt_name, dump_prompt: true)
+
+      case result do
+        {:dump_prompt, prompt, input_text} ->
+          {:ok, prompt, input_text}
+
+        _ ->
+          {:error, :not_supported}
+      end
+    rescue
+      # If the function doesn't accept 4 args, try with 3
+      UndefinedFunctionError ->
+        {:error, :not_supported}
+
+      e ->
+        {:error, e}
+    end
+  end
+
+  # Helper function to call model function with correct arity
+  # Tries 4-arg version first (with empty opts), falls back to 3-arg version
+  defp call_model_function(model_function, text, model_name, prompt_name) do
+    try do
+      # Try calling with 4 args (with empty opts for normal execution)
+      model_function.(text, model_name, prompt_name, [])
+    rescue
+      UndefinedFunctionError ->
+        # Fall back to 3-arg version
+        model_function.(text, model_name, prompt_name)
     end
   end
 end
