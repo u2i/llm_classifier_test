@@ -383,7 +383,7 @@ defmodule LLMClassifierTest do
               _ -> "> #{line}"  # Can't determine, don't label
             end
           end)
-          |> Enum.join("\n>\n")
+          |> Enum.join("\n")
 
         result.full_text && result.full_text != "" ->
           result.full_text
@@ -394,7 +394,7 @@ defmodule LLMClassifierTest do
           |> Enum.map(&to_string/1)
           |> Enum.join(", ")
       end
-      IO.puts("\n**Chosen:**\n#{chosen}")
+      IO.puts("**Chosen:**\n#{chosen}")
 
       # Show pass and warn responses separately (non-chosen acceptable responses)
       case result.test_type do
@@ -416,15 +416,15 @@ defmodule LLMClassifierTest do
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
-              IO.puts("\n**✓ Pass (not matched):** _all pass responses were chosen_")
+              IO.puts("**✓ Pass (not matched):** _all pass responses were chosen_")
             else
-              IO.puts("\n**✓ Pass (not matched):**")
+              IO.puts("**✓ Pass (not matched):**")
               Enum.each(pass_texts, fn text -> IO.puts("- #{text}") end)
             end
 
             # Show warn responses only if there are any remaining (not chosen)
             unless Enum.empty?(warn_texts) do
-              IO.puts("\n**⚠ Warn (not matched):**")
+              IO.puts("**⚠ Warn (not matched):**")
               Enum.each(warn_texts, fn text -> IO.puts("- #{text}") end)
             end
           else
@@ -432,7 +432,7 @@ defmodule LLMClassifierTest do
             pass_cats = (result.pass_list || [])
             |> Enum.map(&to_string/1)
             |> Enum.join(", ")
-            IO.puts("\n**Pass:**  #{pass_cats}")
+            IO.puts("**Pass:**  #{pass_cats}")
 
             warn_cats = (result.warn_list || [])
             |> Enum.map(&to_string/1)
@@ -451,7 +451,7 @@ defmodule LLMClassifierTest do
           else
             "_any except #{result.expected_category}_"
           end
-          IO.puts("\n**Valid:** #{valid}")
+          IO.puts("**Valid:** #{valid}")
       end
       IO.puts("")
       :ok
