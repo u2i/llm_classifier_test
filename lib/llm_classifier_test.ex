@@ -360,29 +360,35 @@ defmodule LLMClassifierTest do
             # Handle both single-line and multi-line phrases
             trimmed_line = String.trim(line)
 
-            # First try direct lookup
-            cat = Map.get(result.all_responses, line) ||
-                  Map.get(result.all_responses, trimmed_line) ||
-                  # If not found, check if this line is part of a multi-line phrase
-                  result.all_responses
-                  |> Enum.find_value(fn {text, type} ->
-                    phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
-                    if trimmed_line in phrase_lines, do: type, else: nil
-                  end)
+            # Skip empty lines
+            if trimmed_line == "" do
+              nil
+            else
+              # First try direct lookup
+              cat = Map.get(result.all_responses, line) ||
+                    Map.get(result.all_responses, trimmed_line) ||
+                    # If not found, check if this line is part of a multi-line phrase
+                    result.all_responses
+                    |> Enum.find_value(fn {text, type} ->
+                      phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
+                      if trimmed_line in phrase_lines, do: type, else: nil
+                    end)
 
-            case cat do
-              cat when not is_nil(cat) ->
-                cond do
-                  MapSet.member?(pass_set, cat) ->
-                    "> #{line} ✅ [PASS]"
-                  MapSet.member?(warn_set, cat) ->
-                    "> #{line} ⚠️ [WARN]"
-                  true ->
-                    "> #{line} ❌ [INVALID]"
-                end
-              _ -> "> #{line}"  # Can't determine, don't label
+              case cat do
+                cat when not is_nil(cat) ->
+                  cond do
+                    MapSet.member?(pass_set, cat) ->
+                      "> #{trimmed_line} ✅ [PASS]"
+                    MapSet.member?(warn_set, cat) ->
+                      "> #{trimmed_line} ⚠️ [WARN]"
+                    true ->
+                      "> #{trimmed_line} ❌ [INVALID]"
+                  end
+                _ -> "> #{trimmed_line}"  # Can't determine, don't label
+              end
             end
           end)
+          |> Enum.reject(&is_nil/1)
           |> Enum.join("\n")
 
         result.full_text && result.full_text != "" ->
