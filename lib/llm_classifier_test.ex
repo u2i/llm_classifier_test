@@ -292,8 +292,8 @@ defmodule LLMClassifierTest do
       :ok
     end
 
-    # Parse test_name back into question and answer
-    defp parse_test_name(test_name) do
+    # Parse test_name back into question and answer (public for GoogleDocsFormatter)
+    def parse_test_name(test_name) do
       cond do
         # Format: "Q: question A: answer"
         String.contains?(test_name, "Q:") && String.contains?(test_name, "A:") ->
@@ -313,6 +313,169 @@ defmodule LLMClassifierTest do
         true ->
           {test_name, ""}
       end
+    end
+  end
+
+  defmodule GoogleDocsFormatter do
+    @moduledoc """
+    Google Docs-friendly markdown formatter with proper blockquotes and list formatting.
+    """
+    @behaviour LLMClassifierTest.Formatter
+
+    @impl true
+    def format_header(category_name, model_name, prompt_name) do
+      IO.puts("\n## Category: #{category_name}")
+      IO.puts("**Model**: #{model_name}, **Prompt**: #{prompt_name}\n")
+      :ok
+    end
+
+    @impl true
+    def format_test_result(%LLMClassifierTest.TestResult{} = result) do
+      # Parse question and answer from test_name
+      {question, answer} = LLMClassifierTest.MarkdownFormatter.parse_test_name(result.test_name)
+
+      # Determine status symbol
+      status_symbol = case result.status do
+        :passed -> "✅"
+        :warning -> "⚠️"
+        :error -> "❌"
+      end
+
+      # Format the output
+      IO.puts("#{status_symbol} **Question:** #{question} \"#{answer}\"")
+
+      # Show chosen response (use full_text if available, otherwise show categories)
+      # Mark invalid responses for positive tests
+      chosen = cond do
+        result.full_text && result.full_text != "" && result.all_responses && is_map(result.all_responses) && result.test_type == :positive ->
+          # For positive tests with all_responses, label each chosen response
+          pass_set = MapSet.new(result.pass_list || [])
+          warn_set = MapSet.new(result.warn_list || [])
+
+          # Split chosen responses into lines and label each one
+          result.full_text
+          |> String.split("\n")
+          |> Enum.map(fn line ->
+            # Find which category this text belongs to using reverse lookup (text => type)
+            # Handle both single-line and multi-line phrases
+            trimmed_line = String.trim(line)
+
+            # First try direct lookup
+            cat = Map.get(result.all_responses, line) ||
+                  Map.get(result.all_responses, trimmed_line) ||
+                  # If not found, check if this line is part of a multi-line phrase
+                  result.all_responses
+                  |> Enum.find_value(fn {text, type} ->
+                    phrase_lines = String.split(text, "\n") |> Enum.map(&String.trim/1)
+                    if trimmed_line in phrase_lines, do: type, else: nil
+                  end)
+
+            case cat do
+              cat when not is_nil(cat) ->
+                cond do
+                  MapSet.member?(pass_set, cat) ->
+                    "> #{line} ✅ [PASS]"
+                  MapSet.member?(warn_set, cat) ->
+                    "> #{line} ⚠️ [WARN]"
+                  true ->
+                    "> #{line} ❌ [INVALID]"
+                end
+              _ -> "> #{line}"  # Can't determine, don't label
+            end
+          end)
+          |> Enum.join("\n>\n")
+
+        result.full_text && result.full_text != "" ->
+          result.full_text
+        Enum.empty?(result.actual_categories) ->
+          "_none_"
+        true ->
+          result.actual_categories
+          |> Enum.map(&to_string/1)
+          |> Enum.join(", ")
+      end
+      IO.puts("\n**Chosen:**\n#{chosen}")
+
+      # Show pass and warn responses separately (non-chosen acceptable responses)
+      case result.test_type do
+        :positive ->
+          # For positive tests, show text of acceptable responses that weren't chosen, split by pass/warn
+          if result.all_responses && is_map(result.all_responses) do
+            # Get non-chosen pass/warn categories
+            non_chosen_pass = (result.pass_list || []) -- result.actual_categories
+            non_chosen_warn = (result.warn_list || []) -- result.actual_categories
+
+            # all_responses is now text => type, so filter by type to get texts
+            pass_texts = result.all_responses
+            |> Enum.filter(fn {_text, type} -> type in non_chosen_pass end)
+            |> Enum.map(fn {text, _type} -> text end)
+
+            warn_texts = result.all_responses
+            |> Enum.filter(fn {_text, type} -> type in non_chosen_warn end)
+            |> Enum.map(fn {text, _type} -> text end)
+
+            # Show pass responses
+            if Enum.empty?(pass_texts) do
+              IO.puts("\n**✓ Pass (not matched):** _all pass responses were chosen_")
+            else
+              IO.puts("\n**✓ Pass (not matched):**")
+              Enum.each(pass_texts, fn text -> IO.puts("- #{text}") end)
+            end
+
+            # Show warn responses only if there are any remaining (not chosen)
+            unless Enum.empty?(warn_texts) do
+              IO.puts("\n**⚠ Warn (not matched):**")
+              Enum.each(warn_texts, fn text -> IO.puts("- #{text}") end)
+            end
+          else
+            # Fallback to showing category names if all_responses not available
+            pass_cats = (result.pass_list || [])
+            |> Enum.map(&to_string/1)
+            |> Enum.join(", ")
+            IO.puts("\n**Pass:**  #{pass_cats}")
+
+            warn_cats = (result.warn_list || [])
+            |> Enum.map(&to_string/1)
+            |> Enum.join(", ")
+            IO.puts("**Warn:**  #{warn_cats}")
+          end
+        :negative ->
+          # For negative tests, show what was expected (not the category being tested)
+          valid = if result.details && String.contains?(result.details, "Expected:") do
+            # Extract expected from details
+            result.details
+            |> String.split("|")
+            |> List.first()
+            |> String.replace("Expected:", "")
+            |> String.trim()
+          else
+            "_any except #{result.expected_category}_"
+          end
+          IO.puts("\n**Valid:** #{valid}")
+      end
+      IO.puts("")
+      :ok
+    end
+
+    @impl true
+    def format_summary(summary) do
+      total_tests = summary.total_tests
+      total_passed = summary.passed
+      total_warned = summary.warned
+      total_errored = summary.errored
+
+      IO.puts("\n## Summary")
+      IO.puts("- **Total tests**: #{total_tests}")
+      IO.puts("- **Passed**: #{total_passed}")
+      IO.puts("- **Warnings**: #{total_warned}")
+      IO.puts("- **Errors**: #{total_errored}")
+
+      if total_tests > 0 do
+        IO.puts("- **Success rate**: #{summary.success_rate}%")
+      else
+        IO.puts("- **Success rate**: N/A (no tests run)")
+      end
+      :ok
     end
   end
 
