@@ -378,18 +378,18 @@ defmodule LLMClassifierTest do
                 cat when not is_nil(cat) ->
                   cond do
                     MapSet.member?(pass_set, cat) ->
-                      "> #{trimmed_line} ✅ [PASS]"
+                      "- #{trimmed_line} ✅ [PASS]"
                     MapSet.member?(warn_set, cat) ->
-                      "> #{trimmed_line} ⚠️ [WARN]"
+                      "- #{trimmed_line} ⚠️ [WARN]"
                     true ->
-                      "> #{trimmed_line} ❌ [INVALID]"
+                      "- #{trimmed_line} ❌ [INVALID]"
                   end
-                _ -> "> #{trimmed_line}"  # Can't determine, don't label
+                _ -> "- #{trimmed_line}"  # Can't determine, don't label
               end
             end
           end)
           |> Enum.reject(&is_nil/1)
-          |> Enum.join("\n\n")  # Double newline for separate blockquote paragraphs
+          |> Enum.join("\n")
 
         result.full_text && result.full_text != "" ->
           result.full_text
@@ -422,16 +422,16 @@ defmodule LLMClassifierTest do
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
-              IO.puts("**✓ Pass (not matched):** _all pass responses were chosen_\n")
+              IO.puts("\n**✓ Pass (not matched):** _all pass responses were chosen_\n")
             else
-              IO.puts("**✓ Pass (not matched):**\n")
+              IO.puts("\n**✓ Pass (not matched):**\n")
               Enum.each(pass_texts, fn text -> IO.puts("- #{text}") end)
               IO.puts("")
             end
 
             # Show warn responses only if there are any remaining (not chosen)
             unless Enum.empty?(warn_texts) do
-              IO.puts("**⚠ Warn (not matched):**\n")
+              IO.puts("\n**⚠ Warn (not matched):**\n")
               Enum.each(warn_texts, fn text -> IO.puts("- #{text}") end)
               IO.puts("")
             end
@@ -440,12 +440,12 @@ defmodule LLMClassifierTest do
             pass_cats = (result.pass_list || [])
             |> Enum.map(&to_string/1)
             |> Enum.join(", ")
-            IO.puts("**Pass:**  #{pass_cats}")
+            IO.puts("\n**Pass:**  #{pass_cats}")
 
             warn_cats = (result.warn_list || [])
             |> Enum.map(&to_string/1)
             |> Enum.join(", ")
-            IO.puts("**Warn:**  #{warn_cats}")
+            IO.puts("\n**Warn:**  #{warn_cats}")
           end
         :negative ->
           # For negative tests, show what was expected (not the category being tested)
@@ -459,7 +459,7 @@ defmodule LLMClassifierTest do
           else
             "_any except #{result.expected_category}_"
           end
-          IO.puts("**Valid:** #{valid}")
+          IO.puts("\n**Valid:** #{valid}")
       end
       IO.puts("")
       :ok
