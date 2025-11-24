@@ -389,7 +389,7 @@ defmodule LLMClassifierTest do
             end
           end)
           |> Enum.reject(&is_nil/1)
-          |> Enum.join("\n")
+          |> Enum.join("\n\n")  # Double newline for separate blockquote paragraphs
 
         result.full_text && result.full_text != "" ->
           result.full_text
@@ -400,7 +400,7 @@ defmodule LLMClassifierTest do
           |> Enum.map(&to_string/1)
           |> Enum.join(", ")
       end
-      IO.puts("**Chosen:**\n#{chosen}")
+      IO.puts("\n**Chosen:**\n\n#{chosen}\n")
 
       # Show pass and warn responses separately (non-chosen acceptable responses)
       case result.test_type do
@@ -422,16 +422,18 @@ defmodule LLMClassifierTest do
 
             # Show pass responses
             if Enum.empty?(pass_texts) do
-              IO.puts("**✓ Pass (not matched):** _all pass responses were chosen_")
+              IO.puts("**✓ Pass (not matched):** _all pass responses were chosen_\n")
             else
-              IO.puts("**✓ Pass (not matched):**")
+              IO.puts("**✓ Pass (not matched):**\n")
               Enum.each(pass_texts, fn text -> IO.puts("- #{text}") end)
+              IO.puts("")
             end
 
             # Show warn responses only if there are any remaining (not chosen)
             unless Enum.empty?(warn_texts) do
-              IO.puts("**⚠ Warn (not matched):**")
+              IO.puts("**⚠ Warn (not matched):**\n")
               Enum.each(warn_texts, fn text -> IO.puts("- #{text}") end)
+              IO.puts("")
             end
           else
             # Fallback to showing category names if all_responses not available
