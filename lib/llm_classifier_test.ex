@@ -772,6 +772,9 @@ defmodule LLMClassifierTest do
       _ -> {[], [], false, false}
     end
 
+    # DEBUG: Trace explicit flag and validation inputs
+    IO.puts("DEBUG [#{test_name}]: explicit=#{explicit}, pass_list=#{inspect(pass_list)}, categories=#{inspect(categories)}, pass_warn_categories=#{inspect(pass_warn_categories)}")
+
     # First check if ALL returned categories are acceptable (in pass or warn lists)
     # BUT only apply strict validation when explicit pass/warn lists were provided
     acceptable_list = pass_list ++ warn_list
