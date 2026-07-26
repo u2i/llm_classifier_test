@@ -117,24 +117,30 @@ defmodule LLMClassifierTest do
          results,
          fallback_category
        ) do
-    categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
-    cond do
-      Enum.member?(categories, category_name) ->
-        IO.puts("\s\s\s✅\tPositive: #{test_name}")
-        update_in(results, [:positive, :passed], &(&1 + 1))
+    case model_function.(text, model_name, prompt_name) do
+      categories when is_list(categories) ->
+        cond do
+          Enum.member?(categories, category_name) ->
+            IO.puts("\s\s\s✅\tPositive: #{test_name}")
+            update_in(results, [:positive, :passed], &(&1 + 1))
 
-      Enum.member?(categories, fallback_category) ->
-        details = "Expected: #{category_name} | Got: #{fallback_category}"
+          Enum.member?(categories, fallback_category) ->
+            details = "Expected: #{category_name} | Got: #{fallback_category}"
 
-        IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
-        update_in(results, [:positive, :passed], &(&1 + 1))
+            IO.puts("\s\s\s⚠️\tPositive: #{test_name} [#{details}]")
+            update_in(results, [:positive, :passed], &(&1 + 1))
 
-      true ->
-        details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")}"
+          true ->
+            details = "Expected: #{category_name} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
+            IO.puts("\s\s\s❌\tPositive: #{test_name} [#{details}]")
+            update_in(results, [:positive, :failed], &(&1 + 1))
+        end
+
+      other ->
+        IO.puts("\s\s\s❌\tPositive: #{test_name} [model error: #{inspect(other)}]")
         update_in(results, [:positive, :failed], &(&1 + 1))
     end
   end
@@ -148,26 +154,32 @@ defmodule LLMClassifierTest do
          model_function,
          results
        ) do
-    categories = model_function.(text, model_name, prompt_name)
     test_name = format_text(text)
 
-    cond do
-      Enum.member?(categories, category_name) ->
-        details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
+    case model_function.(text, model_name, prompt_name) do
+      categories when is_list(categories) ->
+        cond do
+          Enum.member?(categories, category_name) ->
+            details = "Expected: NOT #{category_name} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :failed], &(&1 + 1))
+            IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
+            update_in(results, [:negative, :failed], &(&1 + 1))
 
-      is_nil(expected_category) or Enum.member?(categories, expected_category) ->
-        details = "Expected: #{expected_category || "any"}"
+          is_nil(expected_category) or Enum.member?(categories, expected_category) ->
+            details = "Expected: #{expected_category || "any"}"
 
-        IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
-        update_in(results, [:negative, :passed], &(&1 + 1))
+            IO.puts("\s\s\s✅\tNegative: #{test_name} [#{details}]")
+            update_in(results, [:negative, :passed], &(&1 + 1))
 
-      true ->
-        details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
+          true ->
+            details = "Expected: #{expected_category} | Got: #{Enum.join(categories, ", ")}"
 
-        IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
+            IO.puts("\s\s\s❌\tNegative: #{test_name} [#{details}]")
+            update_in(results, [:negative, :failed], &(&1 + 1))
+        end
+
+      other ->
+        IO.puts("\s\s\s❌\tNegative: #{test_name} [model error: #{inspect(other)}]")
         update_in(results, [:negative, :failed], &(&1 + 1))
     end
   end
