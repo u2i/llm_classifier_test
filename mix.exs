@@ -32,7 +32,7 @@ defmodule LLMClassifierTest.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/yourusername/llm_classifier_test"}
+      links: %{"GitHub" => "https://github.com/u2i/llm_classifier_test"}
     ]
   end
 end
